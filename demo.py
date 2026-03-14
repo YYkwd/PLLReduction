@@ -101,7 +101,8 @@ def save_results(lower_data, P, Y_history, para, scaler, labels, output_dir, for
     return saved_files
 
 
-def main(dataset_name='lost', data_path=None, save_formats=['pkl', 'npy']):
+def main(dataset_name='lost', data_path=None, save_formats=['pkl', 'npy'],
+         use_sample_reliability=False, use_class_balance=False):
     """
     Run SDLPP on dataset.
     
@@ -151,7 +152,11 @@ def main(dataset_name='lost', data_path=None, save_formats=['pkl', 'npy']):
         'target_d': 13,
         'k': 8,
         'miu': 0.1,
-        'thr': 0.95
+        'thr': 0.95,
+        'use_sample_reliability': use_sample_reliability,
+        'use_class_balance': use_class_balance,
+        'imbalance_alpha': 0.5,
+        'imbalance_eps': 1e-8
     }
     
     # Run SDLPP
@@ -173,9 +178,15 @@ if __name__ == '__main__':
     parser.add_argument('--formats', type=str, nargs='+', 
                         default=['pkl', 'npy', 'csv'],
                         help='Save formats: pkl, npy, npz, csv, mat (default: pkl npy csv)')
+    parser.add_argument('--sample-reliability', action='store_true',
+                        help='Enable sample reliability weighting')
+    parser.add_argument('--class-balance', action='store_true',
+                        help='Enable class balance weighting')
     
     args = parser.parse_args()
     
     main(dataset_name=args.dataset, 
          data_path=args.data_path,
-         save_formats=args.formats)
+         save_formats=args.formats,
+         use_sample_reliability=args.sample_reliability,
+         use_class_balance=args.class_balance)
