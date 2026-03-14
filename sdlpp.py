@@ -241,8 +241,6 @@ def sdlpp(data, partial_target, para):
             n_classes, m = Y.shape[0], Y.shape[1]
             r = compute_sample_reliability(Y, candidate_mask, eps) if use_sample_reliability else np.ones(m)
             w_cls = compute_class_weights(Y, r, alpha, eps) if use_class_balance else np.ones(n_classes)
-            if use_sample_reliability:
-                S = S * np.outer(r, r)
             Y, D = update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, S=S, eps=eps)
         else:
             Y, D = update_y(E_dist, Y, k, candidate_mask)
