@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+results/
+*.egg-info/
+debug*.mat
+matlab/*_results.mat
+matlab/debug_*.mat
+.DS_Store
+dist/
+build/
+.Python
