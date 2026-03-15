@@ -103,45 +103,33 @@ def construct_s(X, D, k):
     return E_dist, S
 
 
-def update_y(E_dist, Y_last, k, candidate_mask, r=None, w_cls=None, S=None, eps=1e-8):
+def update_y(E_dist, Y_last, k, candidate_mask, r=None, w_cls=None, eps=1e-8):
     """
     Update labeling confidences and semantic dissimilarity.
     candidate_mask: fixed binary mask from original partial_target, non-candidate must stay 0.
-    r, w_cls: when both provided, use weighted propagation (r=None and w_cls=None for original loop).
+    r, w_cls: optional sample reliability and class weights (k-NN based, S ignored when used).
     """
     m = E_dist.shape[0]
     n_classes = Y_last.shape[0]
 
-    E_1 = (E_dist > 0).astype(float)
-    sort_indices = np.argsort(-E_1, axis=1)
-
-    use_weighted = (r is not None and w_cls is not None)
-    if not use_weighted:
-        Y_new = np.zeros_like(Y_last)
-        for i in range(m):
-            kNN_indices = sort_indices[i, :k]
-            neighbor_indices = np.concatenate([[i], kNN_indices])
-            sort_result = E_1[i, kNN_indices]
-            sort_result = np.concatenate([[1], sort_result[:k]])[:k+1]
-            kNN_Y = Y_last[:, neighbor_indices]
-            kNN_Y = kNN_Y * sort_result[np.newaxis, :]
-            mask = candidate_mask[:, i].reshape(-1, 1)
-            Y_new[:, i] = np.sum(kNN_Y * mask, axis=1)
-            Y_new[:, i] = Y_new[:, i] / (np.sum(Y_new[:, i]) + eps)
-        Y_new = candidate_mask * Y_new
-    else:
-        if S is None:
-            a_ij = E_1.copy() + np.eye(m)
-        else:
-            a_ij = S.copy()
-            np.fill_diagonal(a_ij, np.diag(a_ij) + 1.0)
-        a_row_sum = np.sum(a_ij, axis=1, keepdims=True)
-        a_row_sum[a_row_sum == 0] = 1
-        a_ij = a_ij / a_row_sum
-        q_hat = (a_ij @ (r[:, np.newaxis] * Y_last.T)).T * w_cls[:, np.newaxis]
-        q_tilde = candidate_mask * q_hat
-        q_sum = np.sum(q_tilde, axis=0, keepdims=True) + eps
-        Y_new = q_tilde / q_sum
+    Y_new = np.zeros_like(Y_last)
+    for i in range(m):
+        valid = np.where(E_dist[i] > 0)[0]
+        valid_dists = E_dist[i, valid]
+        order = np.argsort(valid_dists)
+        kNN_indices = valid[order[:k]]
+        neighbor_indices = np.concatenate([[i], kNN_indices])
+        sort_result = np.ones(len(neighbor_indices))
+        kNN_Y = Y_last[:, neighbor_indices]
+        kNN_Y = kNN_Y * sort_result[np.newaxis, :]
+        if r is not None:
+            kNN_Y = kNN_Y * r[neighbor_indices][np.newaxis, :]
+        mask = candidate_mask[:, i].reshape(-1, 1)
+        Y_new[:, i] = np.sum(kNN_Y * mask, axis=1)
+        if w_cls is not None:
+            Y_new[:, i] = Y_new[:, i] * w_cls
+        Y_new[:, i] = Y_new[:, i] / (np.sum(Y_new[:, i]) + eps)
+    Y_new = candidate_mask * Y_new
 
     D_new = 1 - (Y_new.T @ Y_new)
     np.fill_diagonal(D_new, 0)
@@ -241,9 +229,10 @@ def sdlpp(data, partial_target, para):
             n_classes, m = Y.shape[0], Y.shape[1]
             r = compute_sample_reliability(Y, candidate_mask, eps) if use_sample_reliability else np.ones(m)
             w_cls = compute_class_weights(Y, r, alpha, eps) if use_class_balance else np.ones(n_classes)
-            Y, D = update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, S=S, eps=eps)
+            Y, D = update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, eps=eps)
         else:
             Y, D = update_y(E_dist, Y, k, candidate_mask)
+            
 
         X_lower, _ = solver(X, D, S, thr, miu)
         d_new = X_lower.shape[1]
