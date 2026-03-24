@@ -1,0 +1,39 @@
+seed: 42
+
+data:
+  name: lost
+  path: null
+  data_dir: datasets
+
+preprocessing:
+  method: zscore
+
+model:
+  name: sdlpp
+  params:
+    T: 100
+    target_d: 13
+    k: 8
+    miu: 0.1
+    thr: 0.95
+
+disambig:
+  name: knn_propagation
+  params:
+    use_sample_reliability: false
+    use_class_balance: false
+    alpha: 0.5
+    eps: 1.0e-08
+
+classifier:
+  name: knn
+  params:
+    n_neighbors: 5
+
+eval:
+  cv_folds: 5
+
+output:
+  dir: results
+  formats:
+    - json

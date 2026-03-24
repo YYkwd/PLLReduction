@@ -1,0 +1,91 @@
+"""KNN-based label propagation disambiguation.
+
+Extracted from original sdlpp.py: update_y, compute_sample_reliability,
+compute_class_weights. Algorithm logic is preserved exactly.
+"""
+
+import numpy as np
+from .base import BaseDisambiguator
+
+
+def _compute_sample_reliability(Y, candidate_mask, eps=1e-8):
+    """H_i -> H_tilde_i -> r_i = 1 - H_tilde_i"""
+    n_candidates = np.sum(candidate_mask, axis=0).astype(float)
+    H = -np.sum(Y * np.log(Y + eps), axis=0)
+    H_tilde = np.zeros_like(H)
+    multi = n_candidates > 1
+    H_tilde[multi] = H[multi] / (np.log(n_candidates[multi] + eps) + eps)
+    r = 1 - H_tilde
+    return np.clip(r, 0, 1)
+
+
+def _compute_class_weights(Y, r, alpha=0.5, eps=1e-8):
+    """N_k^soft = sum_i r_i q_ik, w_k = 1/(N_k^soft)^alpha, mean-normalized."""
+    N_soft = np.sum(r[np.newaxis, :] * Y, axis=1)
+    w_cls = 1.0 / np.power(N_soft + eps, alpha)
+    w_cls = w_cls / (np.mean(w_cls) + eps)
+    return w_cls
+
+
+def _update_y(E_dist, Y_last, k, candidate_mask, r=None, w_cls=None, eps=1e-8):
+    """KNN label propagation: aggregate neighbor confidences, mask, normalize."""
+    m = E_dist.shape[0]
+    Y_new = np.zeros_like(Y_last)
+
+    for i in range(m):
+        valid = np.where(E_dist[i] > 0)[0]
+        valid_dists = E_dist[i, valid]
+        order = np.argsort(valid_dists)
+        kNN_indices = valid[order[:k]]
+        neighbor_indices = np.concatenate([[i], kNN_indices])
+
+        kNN_Y = Y_last[:, neighbor_indices]
+        if r is not None:
+            kNN_Y = kNN_Y * r[neighbor_indices][np.newaxis, :]
+
+        mask = candidate_mask[:, i].reshape(-1, 1)
+        Y_new[:, i] = np.sum(kNN_Y * mask, axis=1)
+
+        if w_cls is not None:
+            Y_new[:, i] = Y_new[:, i] * w_cls
+
+        Y_new[:, i] = Y_new[:, i] / (np.sum(Y_new[:, i]) + eps)
+
+    Y_new = candidate_mask * Y_new
+
+    D_new = 1 - (Y_new.T @ Y_new)
+    np.fill_diagonal(D_new, 0)
+
+    return Y_new, D_new
+
+
+class KNNPropagation(BaseDisambiguator):
+    """KNN label propagation with optional sample reliability and class balance.
+
+    Params
+    ------
+    use_sample_reliability : bool
+    use_class_balance : bool
+    alpha : float   (class balance exponent)
+    eps : float
+    """
+
+    def __init__(self, params=None):
+        super().__init__(params)
+        p = self.params
+        self.use_sample_reliability = p.get('use_sample_reliability', False)
+        self.use_class_balance = p.get('use_class_balance', False)
+        self.alpha = p.get('alpha', 0.5)
+        self.eps = p.get('eps', 1e-8)
+
+    def disambiguate(self, Y, E_dist, k, candidate_mask):
+        r, w_cls = None, None
+
+        if self.use_sample_reliability:
+            r = _compute_sample_reliability(Y, candidate_mask, self.eps)
+
+        if self.use_class_balance:
+            r_for_cls = r if r is not None else np.ones(Y.shape[1])
+            w_cls = _compute_class_weights(Y, r_for_cls, self.alpha, self.eps)
+
+        return _update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, eps=self.eps)
