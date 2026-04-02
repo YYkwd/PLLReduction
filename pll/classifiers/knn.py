@@ -9,7 +9,7 @@ class KNNClassifier:
         self.n_neighbors = params.get('n_neighbors', 5)
         self._clf = KNeighborsClassifier(n_neighbors=self.n_neighbors)
 
-    def fit(self, X, y):
+    def fit(self, X, y, **kwargs):
         self._clf.fit(X, y)
         return self
 

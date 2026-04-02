@@ -14,8 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pll.data.loader import load_dataset
 from pll.data.preprocessor import ZScorePreprocessor
 from pll.reducers.sdlpp import SDLPPReducer
+from pll.reducers.delin import DELINReducer
+from pll.reducers.cenda import CENDAReducer
 from pll.disambig.knn_propagation import KNNPropagation
 from pll.classifiers.knn import KNNClassifier
+from pll.classifiers.ipal import IPALClassifier
 from pll.eval.metrics import compute_metrics
 from pll.eval.splits import get_many_medium_few_splits, create_cv_splitter
 from pll.eval.reporter import print_metrics, save_results
@@ -24,9 +27,9 @@ from pll.eval.reporter import print_metrics, save_results
 # ---------------------------------------------------------------------------
 # Registry: name -> class (extend here when adding new methods)
 # ---------------------------------------------------------------------------
-REDUCERS = {'sdlpp': SDLPPReducer}
+REDUCERS = {'sdlpp': SDLPPReducer, 'delin': DELINReducer, 'cenda': CENDAReducer}
 DISAMBIGUATORS = {'knn_propagation': KNNPropagation}
-CLASSIFIERS = {'knn': KNNClassifier}
+CLASSIFIERS = {'knn': KNNClassifier, 'ipal': IPALClassifier}
 
 
 def load_config(config_path=None):
@@ -65,6 +68,18 @@ def load_config(config_path=None):
     return defaults
 
 
+MODEL_DEFAULTS = {
+    'sdlpp': {'T': 100, 'target_d': 13, 'k': 8, 'miu': 0.1, 'thr': 0.95},
+    'delin': {'T': 75, 'ratio': 0.6, 'k': 8},
+    'cenda': {'T': 50, 'mu': 0.5, 'dim_para': 0.999, 'k': 8},
+}
+
+CLASSIFIER_DEFAULTS = {
+    'knn': {'n_neighbors': 5},
+    'ipal': {'k': 10, 'alpha': 0.95},
+}
+
+
 def _deep_update(base, override):
     for k, v in override.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
@@ -73,11 +88,27 @@ def _deep_update(base, override):
             base[k] = v
 
 
+def _apply_defaults(config):
+    """Fill in default params when model/classifier name changes."""
+    model_name = config['model']['name']
+    if model_name in MODEL_DEFAULTS:
+        merged = dict(MODEL_DEFAULTS[model_name])
+        merged.update(config['model'].get('params', {}))
+        config['model']['params'] = merged
+
+    cls_name = config['classifier']['name']
+    if cls_name in CLASSIFIER_DEFAULTS:
+        merged = dict(CLASSIFIER_DEFAULTS[cls_name])
+        merged.update(config['classifier'].get('params', {}))
+        config['classifier']['params'] = merged
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
 def run(config):
+    _apply_defaults(config)
     np.random.seed(config['seed'])
 
     # 1. Load
@@ -98,10 +129,11 @@ def run(config):
     print(f"Dataset: {dataset.name} | "
           f"samples={dataset.n_samples} features={dataset.n_features} classes={n_classes}")
 
-    # 2. CV splitter
+    # 2. CV splitter (auto-adapt folds to min class count)
     splitter = create_cv_splitter(
         n_splits=config['eval']['cv_folds'],
         random_state=config['seed'],
+        y=y,
     )
 
     fold_metrics = []
@@ -130,7 +162,7 @@ def run(config):
         # 5. Classify
         cls_cfg = config['classifier']
         clf = CLASSIFIERS[cls_cfg['name']](cls_cfg.get('params'))
-        clf.fit(X_train_low, y_train)
+        clf.fit(X_train_low, y_train, partial_target=pt_train)
         y_pred = clf.predict(X_test_low)
 
         # 6. Evaluate
@@ -149,6 +181,8 @@ def run(config):
 
     # 8. Save
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_name = config['model']['name']
+    cls_name = config['classifier']['name']
     disambig_name = config['disambig']['name']
     dis_params = config['disambig'].get('params', {})
     if dis_params.get('use_sample_reliability') or dis_params.get('use_class_balance'):
@@ -159,7 +193,8 @@ def run(config):
             parts.append('CB')
         disambig_name += '_' + '+'.join(parts)
 
-    output_dir = Path(config['output']['dir']) / dataset.name / disambig_name / timestamp
+    run_tag = f"{model_name}_{cls_name}_{disambig_name}"
+    output_dir = Path(config['output']['dir']) / dataset.name / run_tag / timestamp
     results = {
         'config': config,
         'avg_metrics': avg,
@@ -179,6 +214,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PLL Reduction Experiment')
     parser.add_argument('--config', type=str, default=None)
     parser.add_argument('--dataset', type=str, default=None)
+    parser.add_argument('--model', type=str, default=None,
+                        help=f'Reducer: {list(REDUCERS.keys())}')
+    parser.add_argument('--classifier', type=str, default=None,
+                        help=f'Classifier: {list(CLASSIFIERS.keys())}')
     parser.add_argument('--target-d', type=int, default=None)
     parser.add_argument('--sample-reliability', action='store_true')
     parser.add_argument('--class-balance', action='store_true')
@@ -188,6 +227,10 @@ if __name__ == '__main__':
 
     if args.dataset:
         cfg['data']['name'] = args.dataset
+    if args.model:
+        cfg['model']['name'] = args.model
+    if args.classifier:
+        cfg['classifier']['name'] = args.classifier
     if args.target_d:
         cfg['model']['params']['target_d'] = args.target_d
     if args.sample_reliability:
