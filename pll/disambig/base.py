@@ -17,6 +17,7 @@ class BaseDisambiguator(ABC):
         E_dist: np.ndarray,
         k: int,
         candidate_mask: np.ndarray,
+        iteration: int = 0,
     ) -> tuple:
         """Update label confidence matrix Y.
 

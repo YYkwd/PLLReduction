@@ -145,11 +145,13 @@ class SDLPPReducer(BaseReducer):
         X_iter = X.copy()
         S = None
 
-        for _ in range(self.T):
+        for it in range(self.T):
             d_old = X_iter.shape[1]
             E_dist, S = construct_s(X_iter, D, self.k)
 
-            Y, D = disambiguator.disambiguate(Y, E_dist, self.k, candidate_mask)
+            Y, D = disambiguator.disambiguate(
+                Y, E_dist, self.k, candidate_mask, iteration=it
+            )
 
             X_iter, _ = solve_projection(X_iter, D, S, self.thr, self.miu)
             self.Y_history_['Y'].append(Y.copy())

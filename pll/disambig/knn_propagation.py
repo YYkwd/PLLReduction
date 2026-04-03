@@ -27,6 +27,12 @@ def _compute_class_weights(Y, r, alpha=0.5, eps=1e-8):
     return w_cls
 
 
+def _class_imbalance_cv(Y, r, eps=1e-8):
+    """Coefficient of variation of class soft counts."""
+    N_soft = np.sum(r[np.newaxis, :] * Y, axis=1)
+    return float(np.std(N_soft) / (np.mean(N_soft) + eps))
+
+
 def _update_y(E_dist, Y_last, k, candidate_mask, r=None, w_cls=None, eps=1e-8):
     """KNN label propagation: aggregate neighbor confidences, mask, normalize."""
     m = E_dist.shape[0]
@@ -67,6 +73,10 @@ class KNNPropagation(BaseDisambiguator):
     use_sample_reliability : bool
     use_class_balance : bool
     alpha : float   (class balance exponent)
+    r_min : float   (lower bound for sample reliability)
+    warmup : int    (disable SR before this iteration)
+    cb_gate_enabled : bool
+    cb_gate_threshold : float
     eps : float
     """
 
@@ -76,17 +86,27 @@ class KNNPropagation(BaseDisambiguator):
         self.use_sample_reliability = p.get('use_sample_reliability', False)
         self.use_class_balance = p.get('use_class_balance', False)
         self.r_min = p.get('r_min', 0.0)
+        self.warmup = p.get('warmup', 0)
+        self.cb_gate_enabled = p.get('cb_gate_enabled', False)
+        self.cb_gate_threshold = p.get('cb_gate_threshold', 0.15)
         self.alpha = p.get('alpha', 0.5)
         self.eps = p.get('eps', 1e-8)
 
-    def disambiguate(self, Y, E_dist, k, candidate_mask):
+    def disambiguate(self, Y, E_dist, k, candidate_mask, iteration=0):
         r, w_cls = None, None
 
-        if self.use_sample_reliability:
+        use_sr_now = self.use_sample_reliability and (iteration >= self.warmup)
+
+        if use_sr_now:
             r = _compute_sample_reliability(Y, candidate_mask, self.eps, self.r_min)
 
         if self.use_class_balance:
             r_for_cls = r if r is not None else np.ones(Y.shape[1])
-            w_cls = _compute_class_weights(Y, r_for_cls, self.alpha, self.eps)
+            if self.cb_gate_enabled:
+                cv = _class_imbalance_cv(Y, r_for_cls, self.eps)
+                if cv >= self.cb_gate_threshold:
+                    w_cls = _compute_class_weights(Y, r_for_cls, self.alpha, self.eps)
+            else:
+                w_cls = _compute_class_weights(Y, r_for_cls, self.alpha, self.eps)
 
         return _update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, eps=self.eps)

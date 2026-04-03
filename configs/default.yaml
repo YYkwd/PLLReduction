@@ -23,6 +23,33 @@ disambig:
     use_sample_reliability: false
     use_class_balance: false
     r_min: 0.0
+    warmup: 0
+    warmup_by_dataset:
+      MSRCv2: 2
+      lost: 5
+      slashdotpl-f1: 0
+    sr_cb_policy_by_dataset:
+      lost:
+        use_sample_reliability: true
+        use_class_balance: true
+        r_min: 0.1
+        warmup: 5
+        cb_gate_enabled: false
+      MSRCv2:
+        use_sample_reliability: true
+        use_class_balance: true
+        r_min: 0.1
+        warmup: 2
+        cb_gate_enabled: false
+      slashdotpl-f1:
+        use_sample_reliability: false
+        use_class_balance: false
+        r_min: 0.1
+        warmup: 0
+        cb_gate_enabled: false
+    apply_sr_cb_policy: false
+    cb_gate_enabled: false
+    cb_gate_threshold: 0.15
     alpha: 0.5
     eps: 1.0e-08
 

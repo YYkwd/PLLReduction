@@ -47,6 +47,38 @@ def load_config(config_path=None):
                 'use_sample_reliability': False,
                 'use_class_balance': False,
                 'r_min': 0.0,
+                'warmup': 0,
+                'warmup_by_dataset': {
+                    'MSRCv2': 2,
+                    'lost': 5,
+                    'slashdotpl-f1': 0,
+                },
+                'sr_cb_policy_by_dataset': {
+                    'lost': {
+                        'use_sample_reliability': True,
+                        'use_class_balance': True,
+                        'r_min': 0.1,
+                        'warmup': 5,
+                        'cb_gate_enabled': False,
+                    },
+                    'MSRCv2': {
+                        'use_sample_reliability': True,
+                        'use_class_balance': True,
+                        'r_min': 0.1,
+                        'warmup': 2,
+                        'cb_gate_enabled': False,
+                    },
+                    'slashdotpl-f1': {
+                        'use_sample_reliability': False,
+                        'use_class_balance': False,
+                        'r_min': 0.1,
+                        'warmup': 0,
+                        'cb_gate_enabled': False,
+                    },
+                },
+                'apply_sr_cb_policy': False,
+                'cb_gate_enabled': False,
+                'cb_gate_threshold': 0.15,
                 'alpha': 0.5,
                 'eps': 1e-8,
             },
@@ -104,6 +136,39 @@ def _apply_defaults(config):
         config['classifier']['params'] = merged
 
 
+def _apply_dataset_disambig_overrides(config, dataset_name):
+    """Override disambiguation params with dataset-specific mapping."""
+    dis_params = config['disambig'].setdefault('params', {})
+    if not dis_params.get('apply_sr_cb_policy', False):
+        return
+
+    policy_map = dis_params.get('sr_cb_policy_by_dataset', {})
+    if isinstance(policy_map, dict) and dataset_name in policy_map:
+        policy = policy_map[dataset_name]
+        if isinstance(policy, dict):
+            allowed = {
+                'use_sample_reliability',
+                'use_class_balance',
+                'r_min',
+                'warmup',
+                'cb_gate_enabled',
+                'cb_gate_threshold',
+                'alpha',
+            }
+            for k, v in policy.items():
+                if k in allowed:
+                    dis_params[k] = v
+        return
+
+    warmup_map = dis_params.get('warmup_by_dataset', {})
+
+    if not isinstance(warmup_map, dict):
+        return
+
+    if dis_params.get('use_sample_reliability', False) and dataset_name in warmup_map:
+        dis_params['warmup'] = int(warmup_map[dataset_name])
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
@@ -115,6 +180,7 @@ def run(config):
     # 1. Load
     dcfg = config['data']
     dataset = load_dataset(dcfg['name'], dcfg.get('path'), dcfg.get('data_dir', 'datasets'))
+    _apply_dataset_disambig_overrides(config, dataset.name)
 
     X = dataset.X
     partial_target = dataset.partial_target
