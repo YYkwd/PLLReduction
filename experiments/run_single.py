@@ -46,6 +46,7 @@ def load_config(config_path=None):
             'params': {
                 'use_sample_reliability': False,
                 'use_class_balance': False,
+                'r_min': 0.0,
                 'alpha': 0.5,
                 'eps': 1e-8,
             },

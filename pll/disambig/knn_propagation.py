@@ -8,7 +8,7 @@ import numpy as np
 from .base import BaseDisambiguator
 
 
-def _compute_sample_reliability(Y, candidate_mask, eps=1e-8):
+def _compute_sample_reliability(Y, candidate_mask, eps=1e-8, r_min=0.0):
     """H_i -> H_tilde_i -> r_i = 1 - H_tilde_i"""
     n_candidates = np.sum(candidate_mask, axis=0).astype(float)
     H = -np.sum(Y * np.log(Y + eps), axis=0)
@@ -16,7 +16,7 @@ def _compute_sample_reliability(Y, candidate_mask, eps=1e-8):
     multi = n_candidates > 1
     H_tilde[multi] = H[multi] / (np.log(n_candidates[multi] + eps) + eps)
     r = 1 - H_tilde
-    return np.clip(r, 0, 1)
+    return np.clip(r, r_min, 1)
 
 
 def _compute_class_weights(Y, r, alpha=0.5, eps=1e-8):
@@ -75,6 +75,7 @@ class KNNPropagation(BaseDisambiguator):
         p = self.params
         self.use_sample_reliability = p.get('use_sample_reliability', False)
         self.use_class_balance = p.get('use_class_balance', False)
+        self.r_min = p.get('r_min', 0.0)
         self.alpha = p.get('alpha', 0.5)
         self.eps = p.get('eps', 1e-8)
 
@@ -82,7 +83,7 @@ class KNNPropagation(BaseDisambiguator):
         r, w_cls = None, None
 
         if self.use_sample_reliability:
-            r = _compute_sample_reliability(Y, candidate_mask, self.eps)
+            r = _compute_sample_reliability(Y, candidate_mask, self.eps, self.r_min)
 
         if self.use_class_balance:
             r_for_cls = r if r is not None else np.ones(Y.shape[1])

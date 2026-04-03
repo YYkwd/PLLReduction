@@ -22,6 +22,7 @@ disambig:
   params:
     use_sample_reliability: false
     use_class_balance: false
+    r_min: 0.0
     alpha: 0.5
     eps: 1.0e-08
 
