@@ -48,6 +48,9 @@ disambig:
         warmup: 0
         cb_gate_enabled: false
     apply_sr_cb_policy: false
+    cb_adaptive_alpha: false
+    cb_cv0: 0.1
+    cb_cv1: 0.5
     cb_gate_enabled: false
     cb_gate_threshold: 0.15
     alpha: 0.5
