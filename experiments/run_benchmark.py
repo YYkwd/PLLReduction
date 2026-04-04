@@ -39,7 +39,11 @@ ALL_CLASSIFIERS = list(CLASSIFIERS.keys()) # ['knn', 'ipal']
 # SDLPP-specific disambig variants (other models ignore these)
 SDLPP_DISAMBIG_VARIANTS = {
     'baseline': {'use_sample_reliability': False, 'use_class_balance': False},
-    'SR+CB':    {'use_sample_reliability': True,  'use_class_balance': True},
+    'SR+CB': {
+        'use_sample_reliability': True,
+        'use_class_balance': True,
+        'r_min': 0.1,
+    },
 }
 
 

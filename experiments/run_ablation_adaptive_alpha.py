@@ -111,7 +111,6 @@ def main():
             cfg['model']['name'] = 'sdlpp'
             cfg['disambig']['params'].update(var_params)
             cfg['disambig']['params']['warmup'] = warmup
-            cfg['disambig']['params']['cb_gate_enabled'] = False
             cfg['output']['dir'] = str(
                 Path(base['output']['dir']) / 'benchmark' / 'adaptive_alpha_ablation')
             configs.append((ds, var_name, cfg))

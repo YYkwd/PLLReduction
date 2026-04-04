@@ -80,8 +80,6 @@ class KNNPropagation(BaseDisambiguator):
         alpha_eff = alpha * clip((cv - cb_cv0) / (cb_cv1 - cb_cv0), 0, 1)
     cb_cv0 : float  (CV below which alpha_eff = 0, i.e. balanced -> no CB)
     cb_cv1 : float  (CV above which alpha_eff = alpha_max, full CB)
-    cb_gate_enabled : bool  (legacy binary gate, superseded by adaptive)
-    cb_gate_threshold : float
     eps : float
     """
 
@@ -95,8 +93,6 @@ class KNNPropagation(BaseDisambiguator):
         self.cb_adaptive_alpha = p.get('cb_adaptive_alpha', False)
         self.cb_cv0 = p.get('cb_cv0', 0.1)
         self.cb_cv1 = p.get('cb_cv1', 0.5)
-        self.cb_gate_enabled = p.get('cb_gate_enabled', False)
-        self.cb_gate_threshold = p.get('cb_gate_threshold', 0.15)
         self.alpha = p.get('alpha', 0.5)
         self.eps = p.get('eps', 1e-8)
 
@@ -117,11 +113,6 @@ class KNNPropagation(BaseDisambiguator):
                 if alpha_eff > 1e-12:
                     w_cls = _compute_class_weights(
                         Y, r_for_cls, alpha_eff, self.eps)
-            elif self.cb_gate_enabled:
-                cv = _class_imbalance_cv(Y, r_for_cls, self.eps)
-                if cv >= self.cb_gate_threshold:
-                    w_cls = _compute_class_weights(
-                        Y, r_for_cls, self.alpha, self.eps)
             else:
                 w_cls = _compute_class_weights(
                     Y, r_for_cls, self.alpha, self.eps)
