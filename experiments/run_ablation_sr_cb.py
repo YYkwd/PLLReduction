@@ -11,10 +11,13 @@ Usage:
     python experiments/run_ablation_sr_cb.py --datasets lost MSRCv2
     python experiments/run_ablation_sr_cb.py --seeds 42 43 44      # multi-seed
     python experiments/run_ablation_sr_cb.py --full                 # T=100, cv_folds=5
+    python experiments/run_ablation_sr_cb.py --log-file run.log     # also append to file
+    python experiments/run_ablation_sr_cb.py --log-dir results/logs  # auto-named log under dir
 """
 
-import sys
 import copy
+import logging
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -32,8 +35,8 @@ ALL_DATASETS = [
 
 WARMUP_MAP = {
     'lost': 5, 'MSRCv2': 2, 'Soccer Player': 2, 'Yahoo! News': 3,
-    'FG-NET': 0, 'Mirflickr': 0,
-    'slashdotpl-f1': 0, 'slashdotpl-f2': 0, 'slashdotpl-f3': 0,
+    'FG-NET': 5, 'Mirflickr': 0,
+    'slashdotpl-f1': 0, 'slashdotpl-f2': 0, 'slashdotpl-f3': 2,
 }
 
 VARIANTS = {
@@ -60,6 +63,32 @@ VARIANTS = {
 }
 
 OUTPUT_TAG = 'sr_cb_ablation'
+
+_LOG_FMT = '%(asctime)s | %(levelname)-8s | %(message)s'
+_LOG_DATEFMT = '%Y-%m-%d %H:%M:%S'
+
+LOG = logging.getLogger('sr_cb_ablation')
+
+
+def setup_logging(log_file=None):
+    """Console + optional UTF-8 file; does not alter root logger."""
+    LOG.handlers.clear()
+    LOG.setLevel(logging.DEBUG)
+    LOG.propagate = False
+
+    fmt = logging.Formatter(_LOG_FMT, datefmt=_LOG_DATEFMT)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(fmt)
+    LOG.addHandler(ch)
+
+    if log_file:
+        path = Path(log_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(path, encoding='utf-8')
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(fmt)
+        LOG.addHandler(fh)
 
 
 def build_configs(datasets, seeds, base_config):
@@ -94,8 +123,19 @@ def main():
                         help='Random seeds (default: 42)')
     parser.add_argument('--fast', action='store_true', default=True)
     parser.add_argument('--full', action='store_true')
+    parser.add_argument('--log-file', type=str, default=None,
+                        help='Append logs to this file (UTF-8), in addition to stdout')
+    parser.add_argument('--log-dir', type=str, default=None,
+                        help='Write logs to <log-dir>/sr_cb_ablation_<timestamp>.log')
     args = parser.parse_args()
 
+    log_path = args.log_file
+    if log_path is None and args.log_dir:
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_path = str(Path(args.log_dir) / f'sr_cb_ablation_{ts}.log')
+    setup_logging(log_path)
+
+    session_t0 = time.time()
     base = load_config(args.config)
     if args.full:
         args.fast = False
@@ -111,13 +151,26 @@ def main():
     multi_seed = len(args.seeds) > 1
     all_results = []
 
+    t_sdlpp = MODEL_DEFAULTS.get('sdlpp', {}).get('T', '?')
+    LOG.info(
+        'Session start | mode=%s | cv_folds=%s | T(sdlpp)=%s | datasets=%d | seeds=%s | '
+        'total_runs=%d',
+        'fast' if args.fast else 'full',
+        base['eval']['cv_folds'],
+        t_sdlpp,
+        len(datasets),
+        args.seeds,
+        total,
+    )
+    if log_path:
+        LOG.info('Log file: %s', log_path)
+
     for idx, (ds, var_name, seed, cfg) in enumerate(configs, 1):
         label = f"{ds} / {var_name}"
         if multi_seed:
             label += f" / seed={seed}"
-        print(f"\n{'='*70}")
-        print(f"[{idx}/{total}] {label}")
-        print(f"{'='*70}")
+        LOG.info('=' * 70)
+        LOG.info('START [%d/%d] %s', idx, total, label)
 
         t0 = time.time()
         try:
@@ -132,8 +185,13 @@ def main():
             if multi_seed:
                 row['seed'] = seed
             all_results.append(row)
+            LOG.info(
+                'DONE  [%d/%d] %s | elapsed=%.1fs | balanced_acc=%.4f | overall_acc=%.4f',
+                idx, total, label, elapsed,
+                float(avg['balanced_acc']), float(avg['overall_acc']),
+            )
         except Exception as e:
-            print(f"FAILED: {e}")
+            LOG.exception('FAIL  [%d/%d] %s', idx, total, label)
             row = {
                 'dataset': ds,
                 'method': var_name,
@@ -144,6 +202,10 @@ def main():
                 row['seed'] = seed
             all_results.append(row)
 
+    wall = time.time() - session_t0
+    LOG.info('=' * 70)
+    LOG.info('Session wall time: %.1fs (%.2f min)', wall, wall / 60.0)
+
     print(f"\n\n{'='*70}")
     print("SR x CB ABLATION SUMMARY")
     print(f"{'='*70}\n")
@@ -153,6 +215,7 @@ def main():
     out_dir = Path(base['output']['dir']) / 'benchmark' / OUTPUT_TAG / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
     save_summary_csv(all_results, out_dir / 'summary.csv')
+    LOG.info('Saved summary CSV: %s', out_dir / 'summary.csv')
     print(f"\nSaved to {out_dir}")
 
     return all_results
