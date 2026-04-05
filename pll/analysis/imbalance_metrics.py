@@ -1,169 +1,145 @@
-"""Class imbalance and PLL ambiguity metrics (for experiment design)."""
+"""Class imbalance and candidate label metrics for PLL datasets.
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+All functions accept raw numpy arrays; no Dataset object dependency.
+"""
 
 import numpy as np
+from typing import Optional
 
 
-EPS = 1e-12
+# ---------------------------------------------------------------------------
+# Ground-truth class distribution
+# ---------------------------------------------------------------------------
 
+def class_distribution(target: np.ndarray, n_classes: int) -> dict:
+    """Analyse true-label class distribution.
 
-def _safe_ratio(num: float, den: float) -> float:
-    return float(num / (den + EPS))
+    Parameters
+    ----------
+    target : (n_classes, n_samples) one-hot or (n_samples,) int labels
+    n_classes : total number of classes
 
+    Returns dict with per-class counts and derived statistics.
+    """
+    if target.ndim == 2:
+        y = np.argmax(target, axis=0)
+    else:
+        y = target.ravel().astype(int)
 
-@dataclass
-class TrueLabelStats:
-    """Statistics from ground-truth labels (n_samples,)."""
-
-    n_samples: int
-    n_classes: int
-    counts: np.ndarray  # shape (n_classes,)
-    classes_present: int
-    n_min: int
-    n_max: int
-    n_mean: float
-    imbalance_ratio: float  # N_max / N_min among classes with count > 0
-    cv_counts: float  # std(N) / mean(N), coefficient of variation
-    entropy_norm: float  # H / log(K), uniformity proxy
-    hhi: float  # Herfindahl index sum p_k^2 (high = concentrated / long-tail)
-    effective_num_classes: float  # exp(H), diversity analogue
-    many: List[int]
-    medium: List[int]
-    few: List[int]
-    n_samples_many: int
-    n_samples_medium: int
-    n_samples_few: int
-    frac_classes_tail: float  # fraction of classes with count <= median count
-
-
-def compute_true_label_stats(y: np.ndarray, n_classes: int) -> TrueLabelStats:
-    """y: integer labels (n_samples,) in [0, n_classes)."""
-    y = np.asarray(y, dtype=np.int64).ravel()
-    counts = np.bincount(y, minlength=n_classes)
-    present = int(np.sum(counts > 0))
-    nz = counts[counts > 0]
-    n_min = int(nz.min()) if len(nz) else 0
-    n_max = int(nz.max()) if len(nz) else 0
-    n_mean = float(np.mean(counts)) if len(counts) else 0.0
-    ir = _safe_ratio(float(n_max), float(n_min)) if n_min > 0 else float('inf')
-    cv = float(np.std(counts) / (np.mean(counts) + EPS))
-
-    p = counts.astype(float) / (counts.sum() + EPS)
-    h = -np.sum(p * np.log(p + EPS))
-    h_max = np.log(float(n_classes))
-    entropy_norm = float(h / (h_max + EPS)) if h_max > 0 else 0.0
-
-    hhi = float(np.sum(p ** 2))
-    effective_num = float(np.exp(h))
-
-    many, medium, few = _many_medium_few_from_counts(counts)
-    n_sm = int(sum(counts[list(many)]))
-    n_md = int(sum(counts[list(medium)]))
-    n_fw = int(sum(counts[list(few)]))
-    med_c = float(np.median(counts[counts > 0])) if present else 0.0
-    tail = int(np.sum((counts > 0) & (counts <= med_c))) if present else 0
-    frac_tail = tail / present if present else 0.0
-
-    return TrueLabelStats(
-        n_samples=int(y.shape[0]),
-        n_classes=int(n_classes),
-        counts=counts,
-        classes_present=present,
-        n_min=n_min,
-        n_max=n_max,
-        n_mean=n_mean,
-        imbalance_ratio=ir,
-        cv_counts=cv,
-        entropy_norm=entropy_norm,
-        hhi=hhi,
-        effective_num_classes=effective_num,
-        many=many,
-        medium=medium,
-        few=few,
-        n_samples_many=n_sm,
-        n_samples_medium=n_md,
-        n_samples_few=n_fw,
-        frac_classes_tail=frac_tail,
-    )
-
-
-def _many_medium_few_from_counts(counts: np.ndarray) -> Tuple[List[int], List[int], List[int]]:
-    """Same rule as pll.eval.splits.get_many_medium_few_splits but from counts."""
-    n_classes = len(counts)
+    counts = np.bincount(y, minlength=n_classes).astype(int)
     sorted_idx = np.argsort(-counts)
+
+    n_max = int(counts.max())
+    n_min = int(counts[counts > 0].min()) if np.any(counts > 0) else 0
+    imbalance_ratio = n_max / n_min if n_min > 0 else float('inf')
+
+    # Many / Medium / Few split (same rule as pll.eval.splits)
     n = len(sorted_idx)
-    m = (n + 2) // 3
-    f = (2 * n + 2) // 3
-    many = sorted_idx[:m].tolist()
-    medium = sorted_idx[m:f].tolist()
-    few = sorted_idx[f:].tolist()
-    return many, medium, few
+    m_cut = (n + 2) // 3
+    f_cut = (2 * n + 2) // 3
+    many_idx = sorted_idx[:m_cut].tolist()
+    medium_idx = sorted_idx[m_cut:f_cut].tolist()
+    few_idx = sorted_idx[f_cut:].tolist()
+
+    per_class = []
+    for c in sorted_idx:
+        group = ('many' if c in many_idx else
+                 'medium' if c in medium_idx else 'few')
+        per_class.append({
+            'class': int(c),
+            'count': int(counts[c]),
+            'group': group,
+        })
+
+    return {
+        'n_classes': n_classes,
+        'counts': counts.tolist(),
+        'n_max': n_max,
+        'n_min': n_min,
+        'imbalance_ratio': round(imbalance_ratio, 4),
+        'mean_count': round(float(counts.mean()), 2),
+        'std_count': round(float(counts.std()), 2),
+        'cv': round(float(counts.std() / (counts.mean() + 1e-8)), 4),
+        'many': {'classes': many_idx, 'total_samples': int(counts[many_idx].sum())},
+        'medium': {'classes': medium_idx, 'total_samples': int(counts[medium_idx].sum())},
+        'few': {'classes': few_idx, 'total_samples': int(counts[few_idx].sum())},
+        'per_class': per_class,
+    }
 
 
-@dataclass
-class CandidateStats:
-    """PLL candidate set statistics."""
+# ---------------------------------------------------------------------------
+# Candidate (partial) label statistics
+# ---------------------------------------------------------------------------
 
-    cand_per_sample: np.ndarray  # (n_samples,) count of positive entries per column
-    mean_cand: float
-    std_cand: float
-    min_cand: int
-    max_cand: int
-    median_cand: float
-    frac_singleton: float  # exactly one candidate
-    histogram: Dict[str, int]  # bucket -> count
-    per_class_as_candidate: np.ndarray  # (n_classes,) how often class k appears in candidate set
+def candidate_label_stats(partial_target: np.ndarray,
+                          target: Optional[np.ndarray] = None,
+                          n_classes: int = 0) -> dict:
+    """Statistics about candidate label sets.
+
+    Parameters
+    ----------
+    partial_target : (n_classes, n_samples) binary matrix
+    target : (n_classes, n_samples) one-hot, optional (for noise analysis)
+    n_classes : fallback if partial_target shape is ambiguous
+    """
+    pt = (partial_target > 0).astype(int)
+    n_cls, n_samples = pt.shape
+
+    cands_per_sample = pt.sum(axis=0)  # how many candidates each sample has
+    cls_as_candidate = pt.sum(axis=1)  # how often each class appears as candidate
+
+    result = {
+        'avg_candidates': round(float(cands_per_sample.mean()), 4),
+        'min_candidates': int(cands_per_sample.min()),
+        'max_candidates': int(cands_per_sample.max()),
+        'median_candidates': float(np.median(cands_per_sample)),
+        'std_candidates': round(float(cands_per_sample.std()), 4),
+        'candidate_freq_per_class': cls_as_candidate.tolist(),
+        'candidate_freq_cv': round(
+            float(cls_as_candidate.std() / (cls_as_candidate.mean() + 1e-8)), 4),
+    }
+
+    if target is not None:
+        if target.ndim == 2:
+            y = np.argmax(target, axis=0)
+        else:
+            y = target.ravel().astype(int)
+        # Number of *false* candidate labels per sample
+        true_in_pt = np.array([pt[y[i], i] for i in range(n_samples)])
+        noise_per_sample = cands_per_sample - true_in_pt
+        result['avg_noise_candidates'] = round(float(noise_per_sample.mean()), 4)
+        result['true_label_covered'] = float(true_in_pt.mean())
+
+    return result
 
 
-def compute_candidate_stats(
+# ---------------------------------------------------------------------------
+# Combined report for a single dataset
+# ---------------------------------------------------------------------------
+
+def compute_imbalance_report(
+    X: np.ndarray,
     partial_target: np.ndarray,
-    threshold: float = 0.5,
-) -> CandidateStats:
-    """partial_target: (n_classes, n_samples), binary or soft."""
-    pt = np.asarray(partial_target, dtype=float)
-    binary = pt > threshold
-    cand = np.sum(binary, axis=0).astype(int)
-    n_classes = pt.shape[0]
-    per_class = np.sum(binary, axis=1).astype(int)
+    target: Optional[np.ndarray],
+    name: str,
+    n_classes: int,
+) -> dict:
+    """One-stop report combining class distribution and candidate stats."""
+    report = {
+        'dataset': name,
+        'n_samples': X.shape[0],
+        'n_features': X.shape[1],
+        'n_classes': n_classes,
+        'target_format': f'one-hot ({target.shape})' if target is not None else 'missing',
+        'partial_target_format': f'binary ({partial_target.shape})',
+    }
 
-    hist: Dict[str, int] = {}
-    for c in range(int(cand.min()), int(cand.max()) + 1):
-        hist[str(c)] = int(np.sum(cand == c))
+    if target is not None:
+        report['class_distribution'] = class_distribution(target, n_classes)
+    else:
+        report['class_distribution'] = None
 
-    return CandidateStats(
-        cand_per_sample=cand,
-        mean_cand=float(np.mean(cand)),
-        std_cand=float(np.std(cand)),
-        min_cand=int(cand.min()),
-        max_cand=int(cand.max()),
-        median_cand=float(np.median(cand)),
-        frac_singleton=float(np.mean(cand == 1)),
-        histogram=hist,
-        per_class_as_candidate=per_class,
-    )
+    report['candidate_stats'] = candidate_label_stats(
+        partial_target, target, n_classes)
 
-
-def to_json_safe(obj: Any) -> Any:
-    """Convert numpy / dataclass tree to JSON-serializable types."""
-    if obj is None or isinstance(obj, (bool, str)):
-        return obj
-    if isinstance(obj, (np.integer,)):
-        return int(obj)
-    if isinstance(obj, (np.floating, float)):
-        if np.isnan(obj) or np.isinf(obj):
-            return None
-        return float(obj)
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, dict):
-        return {str(k): to_json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [to_json_safe(x) for x in obj]
-    if hasattr(obj, '__dataclass_fields__'):
-        from dataclasses import asdict
-        return to_json_safe(asdict(obj))
-    return str(obj)
+    return report
