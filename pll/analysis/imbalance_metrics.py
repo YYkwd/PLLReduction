@@ -1,10 +1,67 @@
-"""Class imbalance and candidate label metrics for PLL datasets.
+"""Class imbalance, dimensionality, and candidate label metrics for PLL datasets.
 
 All functions accept raw numpy arrays; no Dataset object dependency.
 """
 
 import numpy as np
 from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Feature space / dimensionality analysis
+# ---------------------------------------------------------------------------
+
+def feature_space_stats(X: np.ndarray) -> dict:
+    """Analyse feature space dimensionality.
+
+    Returns sample/feature ratio, variance spectrum, effective rank,
+    and suggested target_d ranges for dimensionality reduction.
+    """
+    n_samples, n_features = X.shape
+    ratio = round(n_samples / n_features, 4) if n_features > 0 else float('inf')
+
+    feat_var = np.var(X, axis=0)
+    n_zero_var = int(np.sum(feat_var < 1e-12))
+    n_effective_features = n_features - n_zero_var
+
+    # Singular value spectrum (on centred data)
+    X_c = X - X.mean(axis=0)
+    rank_limit = min(n_samples, n_features)
+    try:
+        sv = np.linalg.svd(X_c, compute_uv=False)
+    except np.linalg.LinAlgError:
+        sv = np.zeros(rank_limit)
+    sv = sv[:rank_limit]
+
+    sv_sq = sv ** 2
+    total_var = float(sv_sq.sum())
+
+    # Cumulative explained variance ratio
+    if total_var > 0:
+        cum_ratio = np.cumsum(sv_sq) / total_var
+        dims_90 = int(np.searchsorted(cum_ratio, 0.90)) + 1
+        dims_95 = int(np.searchsorted(cum_ratio, 0.95)) + 1
+        dims_99 = int(np.searchsorted(cum_ratio, 0.99)) + 1
+        # Effective rank (Shannon entropy based)
+        p = sv_sq / total_var
+        p = p[p > 1e-15]
+        eff_rank = float(np.exp(-np.sum(p * np.log(p))))
+    else:
+        dims_90 = dims_95 = dims_99 = 0
+        eff_rank = 0.0
+
+    return {
+        'n_samples': n_samples,
+        'n_features': n_features,
+        'sample_feature_ratio': ratio,
+        'n_zero_var_features': n_zero_var,
+        'n_effective_features': n_effective_features,
+        'effective_rank': round(eff_rank, 2),
+        'dims_90pct': dims_90,
+        'dims_95pct': dims_95,
+        'dims_99pct': dims_99,
+        'top10_sv': [round(float(s), 4) for s in sv[:10]],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +181,7 @@ def compute_imbalance_report(
     name: str,
     n_classes: int,
 ) -> dict:
-    """One-stop report combining class distribution and candidate stats."""
+    """One-stop report combining dimensionality, class distribution, and candidate stats."""
     report = {
         'dataset': name,
         'n_samples': X.shape[0],
@@ -133,6 +190,8 @@ def compute_imbalance_report(
         'target_format': f'one-hot ({target.shape})' if target is not None else 'missing',
         'partial_target_format': f'binary ({partial_target.shape})',
     }
+
+    report['feature_space'] = feature_space_stats(X)
 
     if target is not None:
         report['class_distribution'] = class_distribution(target, n_classes)

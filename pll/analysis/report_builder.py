@@ -45,6 +45,7 @@ def build_full_report(data_dir: str = 'datasets',
 
 _HDR = (
     f"{'Dataset':<18s} {'Samples':>7s} {'Feats':>6s} {'Classes':>7s} "
+    f"{'S/F':>6s} {'EffRank':>7s} {'d90':>4s} {'d95':>4s} "
     f"{'IR':>7s} {'CV':>6s} {'AvgCand':>8s} {'MinC':>5s} {'MaxC':>5s} "
     f"{'Many':>5s} {'Med':>5s} {'Few':>5s}"
 )
@@ -63,18 +64,27 @@ def print_summary(reports: list[dict]):
 
         cd = r.get('class_distribution')
         cs = r.get('candidate_stats', {})
+        fs = r.get('feature_space', {})
 
         ir_str = f"{cd['imbalance_ratio']:.1f}" if cd else '?'
         cv_str = f"{cd['cv']:.3f}" if cd else '?'
         many_n = str(len(cd['many']['classes'])) if cd else '?'
         med_n = str(len(cd['medium']['classes'])) if cd else '?'
         few_n = str(len(cd['few']['classes'])) if cd else '?'
+        sf_str = f"{fs.get('sample_feature_ratio', 0):.1f}"
+        er_str = f"{fs.get('effective_rank', 0):.1f}"
+        d90_str = str(fs.get('dims_90pct', '?'))
+        d95_str = str(fs.get('dims_95pct', '?'))
 
         print(
             f"{r['dataset']:<18s} "
             f"{r['n_samples']:>7d} "
             f"{r['n_features']:>6d} "
             f"{r['n_classes']:>7d} "
+            f"{sf_str:>6s} "
+            f"{er_str:>7s} "
+            f"{d90_str:>4s} "
+            f"{d95_str:>4s} "
             f"{ir_str:>7s} "
             f"{cv_str:>6s} "
             f"{cs.get('avg_candidates', 0):>8.2f} "
@@ -105,6 +115,21 @@ def print_detail(report: dict):
           f"|  Classes: {report['n_classes']}")
     print(f"  Target format: {report['target_format']}")
     print(f"  Partial target format: {report['partial_target_format']}")
+
+    fs = report.get('feature_space', {})
+    if fs:
+        print(f"\n  Feature space:")
+        print(f"    Sample/Feature ratio: {fs.get('sample_feature_ratio', '?')}")
+        print(f"    Zero-variance features: {fs.get('n_zero_var_features', '?')} / "
+              f"{fs.get('n_features', '?')}")
+        print(f"    Effective rank (Shannon): {fs.get('effective_rank', '?')}")
+        print(f"    Dims for 90% var: {fs.get('dims_90pct', '?')}  |  "
+              f"95%: {fs.get('dims_95pct', '?')}  |  "
+              f"99%: {fs.get('dims_99pct', '?')}")
+        top_sv = fs.get('top10_sv', [])
+        if top_sv:
+            sv_str = ', '.join(f'{s:.1f}' for s in top_sv[:5])
+            print(f"    Top-5 singular values: [{sv_str}]")
 
     if cd:
         print(f"\n  Class distribution:")
@@ -173,6 +198,8 @@ def save_report(reports: list[dict], output_dir: str, formats=('json', 'csv')):
         path = out / 'dataset_analysis.csv'
         fieldnames = [
             'dataset', 'n_samples', 'n_features', 'n_classes',
+            'sample_feature_ratio', 'effective_rank',
+            'n_zero_var_features', 'dims_90pct', 'dims_95pct', 'dims_99pct',
             'imbalance_ratio', 'cv', 'mean_count', 'std_count',
             'many_classes', 'many_samples', 'medium_classes', 'medium_samples',
             'few_classes', 'few_samples',
@@ -188,11 +215,18 @@ def save_report(reports: list[dict], output_dir: str, formats=('json', 'csv')):
                     continue
                 cd = r.get('class_distribution') or {}
                 cs = r.get('candidate_stats', {})
+                fs = r.get('feature_space', {})
                 row = {
                     'dataset': r['dataset'],
                     'n_samples': r['n_samples'],
                     'n_features': r['n_features'],
                     'n_classes': r['n_classes'],
+                    'sample_feature_ratio': fs.get('sample_feature_ratio', ''),
+                    'effective_rank': fs.get('effective_rank', ''),
+                    'n_zero_var_features': fs.get('n_zero_var_features', ''),
+                    'dims_90pct': fs.get('dims_90pct', ''),
+                    'dims_95pct': fs.get('dims_95pct', ''),
+                    'dims_99pct': fs.get('dims_99pct', ''),
                     'imbalance_ratio': cd.get('imbalance_ratio', ''),
                     'cv': cd.get('cv', ''),
                     'mean_count': cd.get('mean_count', ''),
