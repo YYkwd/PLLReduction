@@ -34,13 +34,21 @@ disambig:
     lost:
       use_sample_reliability: true
       use_class_balance: true
-      r_min: 0.1
-      warmup: 5
+      r_min: 0.2
+      warmup: 0
+      alpha: 0.7
+      cb_adaptive_alpha: true
+      cb_cv0: 0.05
+      cb_cv1: 0.5
     MSRCv2:
       use_sample_reliability: true
       use_class_balance: true
-      r_min: 0.1
+      r_min: 0.0
       warmup: 2
+      alpha: 0.5
+      cb_adaptive_alpha: true
+      cb_cv0: 0.05
+      cb_cv1: 0.5
     slashdotpl-f1:
       use_sample_reliability: false
       use_class_balance: false

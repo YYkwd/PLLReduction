@@ -24,7 +24,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from experiments.run_single import run, load_config, MODEL_DEFAULTS
+from experiments.run_single import (
+    run,
+    load_config,
+    MODEL_DEFAULTS,
+    canonical_json,
+    compute_config_hash,
+    collect_env_snapshot,
+)
 from pll.eval.reporter import print_summary_table, save_summary_csv
 
 ALL_DATASETS = [
@@ -150,6 +157,7 @@ def main():
     total = len(configs)
     multi_seed = len(args.seeds) > 1
     all_results = []
+    env_snapshot = collect_env_snapshot()
 
     t_sdlpp = MODEL_DEFAULTS.get('sdlpp', {}).get('T', '?')
     LOG.info(
@@ -164,13 +172,28 @@ def main():
     )
     if log_path:
         LOG.info('Log file: %s', log_path)
+    LOG.debug('EnvMeta: %s', canonical_json(env_snapshot))
+    LOG.debug('BaseConfig: %s', canonical_json(base))
 
     for idx, (ds, var_name, seed, cfg) in enumerate(configs, 1):
+        run_id = f"sr_cb_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx:03d}"
+        cfg['_run_meta'] = {
+            'run_id': run_id,
+            'script_name': 'run_ablation_sr_cb',
+            'mode': 'fast' if args.fast else 'full',
+            'env_snapshot': env_snapshot,
+        }
+        cfg_hash = compute_config_hash(cfg)
         label = f"{ds} / {var_name}"
         if multi_seed:
             label += f" / seed={seed}"
         LOG.info('=' * 70)
         LOG.info('START [%d/%d] %s', idx, total, label)
+        LOG.debug(
+            'RunMeta | run_id=%s | config_hash=%s | dataset=%s | method=%s | seed=%s',
+            run_id, cfg_hash, ds, var_name, seed
+        )
+        LOG.debug('RunConfig: %s', canonical_json(cfg))
 
         t0 = time.time()
         try:
@@ -179,11 +202,14 @@ def main():
             row = {
                 'dataset': ds,
                 'method': var_name,
+                'seed': seed,
                 'elapsed_s': round(elapsed, 1),
+                'run_id': run_id,
+                'config_hash': cfg_hash,
+                'script_name': 'run_ablation_sr_cb',
+                'mode': 'fast' if args.fast else 'full',
                 **avg,
             }
-            if multi_seed:
-                row['seed'] = seed
             all_results.append(row)
             LOG.info(
                 'DONE  [%d/%d] %s | elapsed=%.1fs | balanced_acc=%.4f | overall_acc=%.4f',
@@ -195,11 +221,14 @@ def main():
             row = {
                 'dataset': ds,
                 'method': var_name,
+                'seed': seed,
                 'elapsed_s': 0,
+                'run_id': run_id,
+                'config_hash': cfg_hash,
+                'script_name': 'run_ablation_sr_cb',
+                'mode': 'fast' if args.fast else 'full',
                 'error': str(e),
             }
-            if multi_seed:
-                row['seed'] = seed
             all_results.append(row)
 
     wall = time.time() - session_t0

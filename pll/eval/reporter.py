@@ -54,7 +54,10 @@ def save_results(results: dict, output_dir, formats=None):
 # Benchmark summary utilities
 # ---------------------------------------------------------------------------
 
-_META_KEYS = {'dataset', 'method', 'disambig', 'elapsed_s', 'error'}
+_META_KEYS = {
+    'dataset', 'method', 'disambig', 'elapsed_s', 'error',
+    'seed', 'run_id', 'config_hash', 'script_name', 'mode',
+}
 
 
 def _method_col(row):
@@ -98,7 +101,11 @@ def save_summary_csv(rows, path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    fieldnames = ['dataset', 'method'] + keys + ['elapsed_s']
+    optional_meta = []
+    for k in ('seed', 'run_id', 'config_hash', 'script_name', 'mode'):
+        if any(k in r for r in rows):
+            optional_meta.append(k)
+    fieldnames = ['dataset', 'method'] + optional_meta + keys + ['elapsed_s']
     with open(path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()

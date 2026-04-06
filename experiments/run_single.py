@@ -3,8 +3,13 @@
 Pipeline: Load -> Split -> Preprocess -> Reduce(+Disambig) -> Classify -> Evaluate
 """
 
+import os
 import sys
+import json
 import argparse
+import hashlib
+import platform
+import socket
 import numpy as np
 from datetime import datetime
 from pathlib import Path
@@ -104,6 +109,62 @@ CLASSIFIER_DEFAULTS = {
 }
 
 
+def _json_default(obj):
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def canonical_json(data):
+    """Stable JSON serialization for hashing/logging."""
+    return json.dumps(
+        data,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(',', ':'),
+        default=_json_default,
+    )
+
+
+def compute_config_hash(config):
+    """SHA256 hash of normalized config dict."""
+    return hashlib.sha256(canonical_json(config).encode('utf-8')).hexdigest()
+
+
+def collect_env_snapshot():
+    """Collect concise runtime environment details for reproducibility."""
+    snap = {
+        'python': sys.version.split()[0],
+        'platform': platform.platform(),
+        'hostname': socket.gethostname(),
+        'numpy': np.__version__,
+    }
+    try:
+        import scipy
+        snap['scipy'] = scipy.__version__
+    except Exception:
+        snap['scipy'] = 'unknown'
+    try:
+        import sklearn
+        snap['sklearn'] = sklearn.__version__
+    except Exception:
+        snap['sklearn'] = 'unknown'
+    for k in (
+        'OMP_NUM_THREADS',
+        'OPENBLAS_NUM_THREADS',
+        'MKL_NUM_THREADS',
+        'NUMEXPR_NUM_THREADS',
+    ):
+        snap[k] = os.environ.get(k, '')
+    return snap
+
+
 def _deep_update(base, override):
     for k, v in override.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
@@ -181,8 +242,22 @@ def run(config):
     y = y.astype(int)
     n_classes = dataset.n_classes
 
-    print(f"Dataset: {dataset.name} | "
-          f"samples={dataset.n_samples} features={dataset.n_features} classes={n_classes}")
+    config_hash = compute_config_hash(config)
+    run_meta = config.get('_run_meta', {})
+    run_id = run_meta.get('run_id', f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    script_name = run_meta.get('script_name', 'run_single')
+    mode = run_meta.get('mode', 'default')
+    env_snapshot = run_meta.get('env_snapshot', collect_env_snapshot())
+
+    print(
+        f"RunMeta: run_id={run_id} script={script_name} mode={mode} "
+        f"seed={config['seed']} config_hash={config_hash}"
+    )
+    print(f"EnvMeta: {canonical_json(env_snapshot)}")
+    print(
+        f"Dataset: {dataset.name} | "
+        f"samples={dataset.n_samples} features={dataset.n_features} classes={n_classes}"
+    )
 
     # 2. CV splitter (auto-adapt folds to min class count)
     splitter = create_cv_splitter(
@@ -252,6 +327,11 @@ def run(config):
     output_dir = Path(config['output']['dir']) / dataset.name / run_tag / timestamp
     results = {
         'config': config,
+        'config_hash': config_hash,
+        'run_id': run_id,
+        'script_name': script_name,
+        'mode': mode,
+        'env_snapshot': env_snapshot,
         'avg_metrics': avg,
         'fold_metrics': fold_metrics,
     }
