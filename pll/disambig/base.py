@@ -14,7 +14,8 @@ class BaseDisambiguator(ABC):
     def disambiguate(
         self,
         Y: np.ndarray,
-        E_dist: np.ndarray,
+        nn_indices: np.ndarray,
+        nn_dists: np.ndarray,
         k: int,
         candidate_mask: np.ndarray,
         iteration: int = 0,
@@ -23,14 +24,16 @@ class BaseDisambiguator(ABC):
 
         Parameters
         ----------
-        Y : (n_classes, n_samples) current label confidences
-        E_dist : (n_samples, n_samples) neighbor distance matrix
+        Y : (n_classes, m) current label confidences
+        nn_indices : (m, k) neighbor indices (-1 = filtered out)
+        nn_dists : (m, k) neighbor distances (0 = filtered out)
         k : number of neighbors
-        candidate_mask : (n_classes, n_samples) binary mask
+        candidate_mask : (n_classes, m) binary mask
+        iteration : current iteration number
 
         Returns
         -------
-        Y_new : (n_classes, n_samples)
-        D_new : (n_samples, n_samples) semantic dissimilarity
+        Y_new : (n_classes, m)
+        D_new : (m, m) semantic dissimilarity
         """
         ...

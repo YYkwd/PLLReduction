@@ -33,10 +33,19 @@ def _class_imbalance_cv(Y, r, eps=1e-8):
     return float(np.std(N_soft) / (np.mean(N_soft) + eps))
 
 
-def _update_y(E_dist, Y_last, k, candidate_mask, r=None, w_cls=None, eps=1e-8):
+def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
+              r=None, w_cls=None, eps=1e-8):
     """KNN label propagation: aggregate neighbor confidences, mask, normalize."""
-    m = E_dist.shape[0]
+    m = Y_last.shape[1]
+    n_k = nn_indices.shape[1]
     Y_new = np.zeros_like(Y_last)
+
+    E_dist = np.zeros((m, m))
+    for i in range(m):
+        for j in range(n_k):
+            idx = nn_indices[i, j]
+            if idx >= 0:
+                E_dist[i, idx] = nn_dists[i, j]
 
     for i in range(m):
         valid = np.where(E_dist[i] > 0)[0]
@@ -96,7 +105,7 @@ class KNNPropagation(BaseDisambiguator):
         self.alpha = p.get('alpha', 0.5)
         self.eps = p.get('eps', 1e-8)
 
-    def disambiguate(self, Y, E_dist, k, candidate_mask, iteration=0):
+    def disambiguate(self, Y, nn_indices, nn_dists, k, candidate_mask, iteration=0):
         r, w_cls = None, None
 
         use_sr_now = self.use_sample_reliability and (iteration >= self.warmup)
@@ -117,4 +126,5 @@ class KNNPropagation(BaseDisambiguator):
                 w_cls = _compute_class_weights(
                     Y, r_for_cls, self.alpha, self.eps)
 
-        return _update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, eps=self.eps)
+        return _update_y(nn_indices, nn_dists, Y, k, candidate_mask,
+                         r=r, w_cls=w_cls, eps=self.eps)

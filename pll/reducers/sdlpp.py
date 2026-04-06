@@ -1,7 +1,6 @@
 """SDLPP: Semi-supervised Dimensionality Learning with Partial Labels.
 
-Ported from original sdlpp.py. All mathematical logic (eudist2, get_proper_dim,
-construct_s, solver) is preserved exactly. The disambiguation step is delegated
+Ported from original sdlpp.py. The disambiguation step is delegated
 to a pluggable BaseDisambiguator instance.
 """
 
@@ -12,7 +11,7 @@ from .base import BaseReducer
 
 
 # ---------------------------------------------------------------------------
-# Mathematical utilities (unchanged from original)
+# Mathematical utilities
 # ---------------------------------------------------------------------------
 
 def eudist2(fea_a, fea_b=None, b_sqrt=True):
@@ -51,29 +50,49 @@ def get_proper_dim(lambda_vals, dim_para):
 
 
 def construct_s(X, D, k):
+    """Build similarity S and compact neighbor arrays.
+
+    Uses eudist2 for exact distance computation. Returns compact (m, k)
+    neighbor arrays (replacing the old m x m E_dist) and a dense S matrix.
+    Temporary m x m distance matrix is freed before return.
+
+    Returns
+    -------
+    nn_indices : (m, k) int — neighbor sample indices, -1 if filtered out
+    nn_dists   : (m, k) float — euclidean distances, 0.0 if filtered out
+    S          : (m, m) float — heat-kernel similarity (dense)
+    """
     m = X.shape[0]
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms = np.maximum(norms, 1e-10)
     X_norm = X / norms
+
     dist = eudist2(X_norm)
     sorted_indices = np.argsort(dist, axis=1)
-    neighbor = sorted_indices[:, 1:k+1]
-    allDist = np.sort(dist, axis=1)[:, 1:k+1]
+    neighbor = sorted_indices[:, 1:k+1]       # (m, k)
+    allDist = np.sort(dist, axis=1)[:, 1:k+1]  # (m, k)
+    del dist, sorted_indices
+
     sigma = np.mean(allDist[:, -1])
     if sigma < 1e-10:
         sigma = 1.0
 
-    E_dist = np.zeros((m, m))
+    nn_indices = np.full((m, k), -1, dtype=int)
+    nn_dists = np.zeros((m, k))
     S = np.zeros((m, m))
+
     for i in range(m):
         neighbor_idx = np.where(D[i, neighbor[i, :]] < 1)[0]
         if len(neighbor_idx) > 0:
             for j in neighbor_idx:
                 neighbor_j = neighbor[i, j]
                 distance = allDist[i, j]
-                E_dist[i, neighbor_j] = distance
-                S[i, neighbor_j] = np.exp(-distance * distance / (sigma * sigma))
-    return E_dist, S
+                nn_indices[i, j] = neighbor_j
+                nn_dists[i, j] = distance
+                S[i, neighbor_j] = np.exp(
+                    -distance * distance / (sigma * sigma))
+
+    return nn_indices, nn_dists, S
 
 
 def solve_projection(X, D, S, thr, miu):
@@ -140,22 +159,21 @@ class SDLPPReducer(BaseReducer):
         D = 1 - (Y.T @ Y)
         np.fill_diagonal(D, 0)
 
-        self.Y_history_ = {'Y': [Y.copy()], 'D': [D.copy()]}
+        self.Y_history_ = {'Y': [Y.copy()]}
 
         X_iter = X.copy()
         S = None
 
         for it in range(self.T):
             d_old = X_iter.shape[1]
-            E_dist, S = construct_s(X_iter, D, self.k)
+            nn_indices, nn_dists, S = construct_s(X_iter, D, self.k)
 
             Y, D = disambiguator.disambiguate(
-                Y, E_dist, self.k, candidate_mask, iteration=it
+                Y, nn_indices, nn_dists, self.k, candidate_mask, iteration=it
             )
 
             X_iter, _ = solve_projection(X_iter, D, S, self.thr, self.miu)
             self.Y_history_['Y'].append(Y.copy())
-            self.Y_history_['D'].append(D.copy())
 
             if X_iter.shape[1] == d_old:
                 break
