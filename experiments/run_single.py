@@ -6,6 +6,7 @@ Pipeline: Load -> Split -> Preprocess -> Reduce(+Disambig) -> Classify -> Evalua
 import os
 import sys
 import json
+import copy
 import argparse
 import hashlib
 import platform
@@ -30,6 +31,13 @@ from pll.eval.reporter import print_metrics, save_results
 
 
 # ---------------------------------------------------------------------------
+# Project paths & config loading
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CONFIG_YAML = _PROJECT_ROOT / 'configs' / 'default.yaml'
+
+
+# ---------------------------------------------------------------------------
 # Registry: name -> class (extend here when adding new methods)
 # ---------------------------------------------------------------------------
 REDUCERS = {'sdlpp': SDLPPReducer, 'delin': DELINReducer, 'cenda': CENDAReducer}
@@ -37,64 +45,82 @@ DISAMBIGUATORS = {'knn_propagation': KNNPropagation}
 CLASSIFIERS = {'knn': KNNClassifier, 'ipal': IPALClassifier}
 
 
-def load_config(config_path=None):
-    defaults = {
+def _minimal_config_skeleton():
+    """Last-resort structure if configs/default.yaml is missing or PyYAML unavailable."""
+    return {
         'seed': 42,
         'data': {'name': 'lost', 'path': None, 'data_dir': 'datasets'},
         'preprocessing': {'method': 'zscore'},
-        'model': {
-            'name': 'sdlpp',
-            'params': {'T': 100, 'target_d': 13, 'k': 8, 'miu': 0.1, 'thr': 0.95},
-        },
+        'model': {'name': 'sdlpp', 'params': {}},
         'disambig': {
             'name': 'knn_propagation',
-            'params': {
-                'use_sample_reliability': False,
-                'use_class_balance': False,
-                'r_min': 0.0,
-                'warmup': 0,
-                'cb_adaptive_alpha': False,
-                'cb_cv0': 0.1,
-                'cb_cv1': 0.5,
-                'alpha': 0.5,
-                'eps': 1e-8,
-            },
+            'params': {},
             'apply_sr_cb_policy': False,
-            'sr_cb_policy_by_dataset': {
-                'lost': {
-                    'use_sample_reliability': True,
-                    'use_class_balance': True,
-                    'r_min': 0.1,
-                    'warmup': 5,
-                },
-                'MSRCv2': {
-                    'use_sample_reliability': True,
-                    'use_class_balance': True,
-                    'r_min': 0.1,
-                    'warmup': 2,
-                },
-                'slashdotpl-f1': {
-                    'use_sample_reliability': False,
-                    'use_class_balance': False,
-                },
-            },
+            'sr_cb_policy_by_dataset': {},
         },
-        'classifier': {'name': 'knn', 'params': {'n_neighbors': 5}},
+        'classifier': {'name': 'knn', 'params': {}},
         'eval': {'cv_folds': 5},
         'output': {'dir': 'results', 'formats': ['json']},
     }
 
-    if config_path is not None:
-        try:
-            import yaml
-            with open(config_path) as f:
-                user_cfg = yaml.safe_load(f)
-            if user_cfg:
-                _deep_update(defaults, user_cfg)
-        except ImportError:
-            print("pyyaml not installed, using default config")
 
-    return defaults
+def _load_yaml_as_dict(path: Path):
+    """Load a YAML file into a dict, or return None if missing / error."""
+    try:
+        import yaml
+    except ImportError:
+        return None
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = yaml.safe_load(f)
+    except OSError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def load_config(config_path=None):
+    """Load training config from YAML.
+
+    Single source of truth for full defaults is ``configs/default.yaml``.
+
+    - ``config_path`` is ``None``: return a deep copy of ``configs/default.yaml``
+      (or ``_minimal_config_skeleton()`` if the file or PyYAML is unavailable).
+    - ``config_path`` is set: start from ``configs/default.yaml``, then deep-merge
+      the given file (so partial experiment YAMLs override the repo default).
+    """
+    base = _load_yaml_as_dict(_DEFAULT_CONFIG_YAML)
+    if base is None:
+        print(
+            'WARN: configs/default.yaml not found or PyYAML unavailable; '
+            'using minimal config skeleton.'
+        )
+        base = _minimal_config_skeleton()
+    else:
+        base = copy.deepcopy(base)
+
+    if config_path is not None:
+        extra = _load_yaml_as_dict(Path(config_path))
+        if extra:
+            _deep_update(base, extra)
+        else:
+            print(f'WARN: could not load YAML from {config_path!r}; using default.yaml only.')
+
+    return base
+
+
+def apply_fast_training_overrides(config):
+    """Fast-screening budget in-place on one config (does not mutate MODEL_DEFAULTS)."""
+    config['eval']['cv_folds'] = 3
+    mname = config['model']['name']
+    if mname in MODEL_DEFAULTS and 'T' in MODEL_DEFAULTS[mname]:
+        config.setdefault('model', {}).setdefault('params', {})['T'] = 10
+
+
+def project_root():
+    return _PROJECT_ROOT
 
 
 MODEL_DEFAULTS = {
@@ -222,7 +248,7 @@ def _apply_dataset_disambig_overrides(config, dataset_name):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def run(config):
+def run(config, *, return_meta=False):
     _apply_defaults(config)
     np.random.seed(config['seed'])
 
@@ -338,6 +364,13 @@ def run(config):
     save_results(results, output_dir, config['output'].get('formats', ['json']))
     print(f"Saved to {output_dir}")
 
+    meta = {
+        'output_dir': str(output_dir.resolve()),
+        'config_hash': config_hash,
+        'run_id': run_id,
+    }
+    if return_meta:
+        return avg, meta
     return avg
 
 

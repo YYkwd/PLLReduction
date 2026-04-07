@@ -28,10 +28,13 @@ from experiments.run_single import (
     run,
     load_config,
     MODEL_DEFAULTS,
+    apply_fast_training_overrides,
     canonical_json,
     compute_config_hash,
     collect_env_snapshot,
+    project_root,
 )
+from experiments.tools.session_manifest import write_session_manifest, write_runs_index
 from pll.eval.reporter import print_summary_table, save_summary_csv
 
 ALL_DATASETS = [
@@ -143,23 +146,25 @@ def main():
     setup_logging(log_path)
 
     session_t0 = time.time()
+    session_started_iso = datetime.now().isoformat(timespec='seconds')
+    model_defaults_at_start = copy.deepcopy(MODEL_DEFAULTS)
     base = load_config(args.config)
     if args.full:
         args.fast = False
     if args.fast:
-        base['eval']['cv_folds'] = 3
-        for m in MODEL_DEFAULTS:
-            if 'T' in MODEL_DEFAULTS[m]:
-                MODEL_DEFAULTS[m]['T'] = 10
+        base = copy.deepcopy(base)
+        apply_fast_training_overrides(base)
 
     datasets = args.datasets or ALL_DATASETS
     configs = build_configs(datasets, args.seeds, base)
     total = len(configs)
     multi_seed = len(args.seeds) > 1
     all_results = []
+    runs_index_rows = []
     env_snapshot = collect_env_snapshot()
 
-    t_sdlpp = MODEL_DEFAULTS.get('sdlpp', {}).get('T', '?')
+    t_sdlpp = base.get('model', {}).get('params', {}).get(
+        'T', MODEL_DEFAULTS.get('sdlpp', {}).get('T', '?'))
     LOG.info(
         'Session start | mode=%s | cv_folds=%s | T(sdlpp)=%s | datasets=%d | seeds=%s | '
         'total_runs=%d',
@@ -183,22 +188,24 @@ def main():
             'mode': 'fast' if args.fast else 'full',
             'env_snapshot': env_snapshot,
         }
-        cfg_hash = compute_config_hash(cfg)
         label = f"{ds} / {var_name}"
         if multi_seed:
             label += f" / seed={seed}"
         LOG.info('=' * 70)
         LOG.info('START [%d/%d] %s', idx, total, label)
-        LOG.debug(
-            'RunMeta | run_id=%s | config_hash=%s | dataset=%s | method=%s | seed=%s',
-            run_id, cfg_hash, ds, var_name, seed
-        )
         LOG.debug('RunConfig: %s', canonical_json(cfg))
 
         t0 = time.time()
         try:
-            avg = run(cfg)
+            avg, meta = run(cfg, return_meta=True)
+            cfg_hash = meta['config_hash']
             elapsed = time.time() - t0
+            try:
+                results_rel = str(
+                    Path(meta['output_dir']).resolve().relative_to(project_root())
+                )
+            except ValueError:
+                results_rel = meta['output_dir']
             row = {
                 'dataset': ds,
                 'method': var_name,
@@ -211,6 +218,18 @@ def main():
                 **avg,
             }
             all_results.append(row)
+            runs_index_rows.append({
+                'dataset': ds,
+                'method': var_name,
+                'seed': seed,
+                'run_id': run_id,
+                'config_hash': cfg_hash,
+                'results_json_rel': f'{results_rel}/results.json',
+            })
+            LOG.debug(
+                'RunMeta | run_id=%s | config_hash=%s | dataset=%s | method=%s | seed=%s',
+                run_id, cfg_hash, ds, var_name, seed,
+            )
             LOG.info(
                 'DONE  [%d/%d] %s | elapsed=%.1fs | balanced_acc=%.4f | overall_acc=%.4f',
                 idx, total, label, elapsed,
@@ -218,6 +237,7 @@ def main():
             )
         except Exception as e:
             LOG.exception('FAIL  [%d/%d] %s', idx, total, label)
+            cfg_hash = compute_config_hash(cfg)
             row = {
                 'dataset': ds,
                 'method': var_name,
@@ -230,6 +250,14 @@ def main():
                 'error': str(e),
             }
             all_results.append(row)
+            runs_index_rows.append({
+                'dataset': ds,
+                'method': var_name,
+                'seed': seed,
+                'run_id': run_id,
+                'config_hash': cfg_hash,
+                'results_json_rel': '',
+            })
 
     wall = time.time() - session_t0
     LOG.info('=' * 70)
@@ -244,7 +272,25 @@ def main():
     out_dir = Path(base['output']['dir']) / 'benchmark' / OUTPUT_TAG / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
     save_summary_csv(all_results, out_dir / 'summary.csv')
+    write_runs_index(out_dir, runs_index_rows)
+    n_ok = sum(1 for r in all_results if 'error' not in r)
+    write_session_manifest(
+        out_dir,
+        script_name='run_ablation_sr_cb',
+        campaign=OUTPUT_TAG,
+        mode_fast=bool(args.fast),
+        base_config=base,
+        env_snapshot=env_snapshot,
+        model_defaults_snapshot=model_defaults_at_start,
+        started_at_iso=session_started_iso,
+        ended_at_iso=datetime.now().isoformat(timespec='seconds'),
+        wall_seconds=time.time() - session_t0,
+        config_path=args.config,
+        n_runs=len(all_results),
+        n_success=n_ok,
+    )
     LOG.info('Saved summary CSV: %s', out_dir / 'summary.csv')
+    LOG.info('Saved session_manifest.json and runs_index.csv under %s', out_dir)
     print(f"\nSaved to {out_dir}")
 
     return all_results

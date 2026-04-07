@@ -1,0 +1,6 @@
+# Recommended / best-known settings (evidence-linked). Populated via:
+#   python experiments/tools/update_registry.py --summary <path/to/summary.csv> --append
+# Live training defaults: ../default.yaml (disambig.sr_cb_policy_by_dataset).
+
+schema_version: 1
+entries: []

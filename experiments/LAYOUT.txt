@@ -1,0 +1,19 @@
+experiments/ layout
+===================
+
+Entry points (run from repo root with `python experiments/<script>.py`):
+  run_single.py              — single dataset / CLI overrides
+  run_benchmark.py           — multi-dataset x reducer x classifier grid
+  run_ablation_sr_cb.py      — SR x CB ablation
+  run_ablation_adaptive_alpha.py
+  verify_consistency.py      — SDLPP numeric consistency
+  verify_ipal_cenda.py
+  analyze_datasets.py        — dataset imbalance reports
+
+Subpackages:
+  tools/                     — session_manifest, update_registry, export_session_manifest
+  tests/                     — unittest modules (e.g. test_acceptance_config_registry.py)
+
+Config source of truth:
+  configs/default.yaml       — full defaults; run_single.load_config() reads this file
+                               (no duplicated full config in Python).
