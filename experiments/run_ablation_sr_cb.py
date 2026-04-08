@@ -44,7 +44,7 @@ ALL_DATASETS = [
 ]
 
 WARMUP_MAP = {
-    'lost': 5, 'MSRCv2': 2, 'Soccer Player': 2, 'Yahoo! News': 3,
+    'lost': 0, 'MSRCv2': 2, 'Soccer Player': 2, 'Yahoo! News': 3,
     'FG-NET': 5, 'Mirflickr': 0,
     'slashdotpl-f1': 0, 'slashdotpl-f2': 0, 'slashdotpl-f3': 2,
 }

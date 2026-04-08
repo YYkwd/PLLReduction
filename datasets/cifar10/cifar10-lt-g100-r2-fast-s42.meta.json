@@ -1,0 +1,29 @@
+{
+  "dataset_name": "cifar10-lt-g100-r2-fast-s42",
+  "mode": "fast",
+  "seed": 42,
+  "gamma": 100,
+  "r": 2,
+  "n1": 1000,
+  "n_samples": 2480,
+  "n_features": 3072,
+  "n_classes": 10,
+  "class_counts": [
+    1000,
+    599,
+    359,
+    215,
+    129,
+    77,
+    46,
+    28,
+    17,
+    10
+  ],
+  "imbalance_ratio": 100.0,
+  "avg_candidates": 3.0,
+  "candidate_min": 3,
+  "candidate_max": 3,
+  "source_dir": "datasets/cifar-10-batches-mat",
+  "output_mat": "datasets/cifar10/cifar10-lt-g100-r2-fast-s42.mat"
+}

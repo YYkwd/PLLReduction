@@ -1,0 +1,29 @@
+{
+  "dataset_name": "cifar10-lt-g200-r3-full-s43",
+  "mode": "full",
+  "seed": 43,
+  "gamma": 200,
+  "r": 3,
+  "n1": 3000,
+  "n_samples": 6724,
+  "n_features": 3072,
+  "n_classes": 10,
+  "class_counts": [
+    3000,
+    1665,
+    924,
+    513,
+    285,
+    158,
+    88,
+    49,
+    27,
+    15
+  ],
+  "imbalance_ratio": 200.0,
+  "avg_candidates": 4.0,
+  "candidate_min": 4,
+  "candidate_max": 4,
+  "source_dir": "datasets/cifar-10-batches-mat",
+  "output_mat": "datasets/cifar10/cifar10-lt-g200-r3-full-s43.mat"
+}
