@@ -35,38 +35,37 @@ def _class_imbalance_cv(Y, r, eps=1e-8):
 
 def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
               r=None, w_cls=None, eps=1e-8):
-    """KNN label propagation: aggregate neighbor confidences, mask, normalize."""
-    m = Y_last.shape[1]
-    n_k = nn_indices.shape[1]
-    Y_new = np.zeros_like(Y_last)
+    """KNN label propagation: aggregate neighbor confidences, mask, normalize.
 
-    E_dist = np.zeros((m, m))
-    for i in range(m):
-        for j in range(n_k):
-            idx = nn_indices[i, j]
-            if idx >= 0:
-                E_dist[i, idx] = nn_dists[i, j]
+    Vectorized: avoids rebuilding m x m E_dist and per-sample Python loops.
+    """
+    Q, m = Y_last.shape
 
-    for i in range(m):
-        valid = np.where(E_dist[i] > 0)[0]
-        valid_dists = E_dist[i, valid]
-        order = np.argsort(valid_dists)
-        kNN_indices = valid[order[:k]]
-        neighbor_indices = np.concatenate([[i], kNN_indices])
+    self_idx = np.arange(m).reshape(-1, 1)                    # (m, 1)
+    all_nn = np.concatenate([self_idx, nn_indices], axis=1)    # (m, k+1)
 
-        kNN_Y = Y_last[:, neighbor_indices]
-        if r is not None:
-            kNN_Y = kNN_Y * r[neighbor_indices][np.newaxis, :]
+    valid = np.ones((m, nn_indices.shape[1] + 1), dtype=bool)
+    valid[:, 1:] = nn_indices >= 0                             # (m, k+1)
 
-        mask = candidate_mask[:, i].reshape(-1, 1)
-        Y_new[:, i] = np.sum(kNN_Y * mask, axis=1)
+    safe_idx = np.where(all_nn >= 0, all_nn, 0)               # (m, k+1)
 
-        if w_cls is not None:
-            Y_new[:, i] = Y_new[:, i] * w_cls
+    Y_nb = Y_last[:, safe_idx]                                 # (Q, m, k+1)
+    Y_nb = Y_nb * valid[np.newaxis, :, :]
 
-        Y_new[:, i] = Y_new[:, i] / (np.sum(Y_new[:, i]) + eps)
+    if r is not None:
+        r_nb = r[safe_idx] * valid                             # (m, k+1)
+        Y_nb = Y_nb * r_nb[np.newaxis, :, :]
 
-    Y_new = candidate_mask * Y_new
+    Y_new = np.sum(Y_nb, axis=2)                               # (Q, m)
+    Y_new *= candidate_mask
+
+    if w_cls is not None:
+        Y_new *= w_cls[:, np.newaxis]
+
+    col_sum = np.sum(Y_new, axis=0, keepdims=True) + eps       # (1, m)
+    Y_new /= col_sum
+
+    Y_new *= candidate_mask
 
     D_new = 1 - (Y_new.T @ Y_new)
     np.fill_diagonal(D_new, 0)
