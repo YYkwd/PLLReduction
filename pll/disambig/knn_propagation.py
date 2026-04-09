@@ -33,31 +33,39 @@ def _class_imbalance_cv(Y, r, eps=1e-8):
     return float(np.std(N_soft) / (np.mean(N_soft) + eps))
 
 
-def _update_y(E_dist, Y_last, k, candidate_mask, r=None, w_cls=None, eps=1e-8):
-    """KNN label propagation: aggregate neighbor confidences, mask, normalize."""
-    m = E_dist.shape[0]
-    Y_new = np.zeros_like(Y_last)
+def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
+              r=None, w_cls=None, eps=1e-8):
+    """KNN label propagation: aggregate neighbor confidences, mask, normalize.
 
-    for i in range(m):
-        valid = np.where(E_dist[i] > 0)[0]
-        valid_dists = E_dist[i, valid]
-        order = np.argsort(valid_dists)
-        kNN_indices = valid[order[:k]]
-        neighbor_indices = np.concatenate([[i], kNN_indices])
+    Vectorized: avoids rebuilding m x m E_dist and per-sample Python loops.
+    """
+    Q, m = Y_last.shape
 
-        kNN_Y = Y_last[:, neighbor_indices]
-        if r is not None:
-            kNN_Y = kNN_Y * r[neighbor_indices][np.newaxis, :]
+    self_idx = np.arange(m).reshape(-1, 1)                    # (m, 1)
+    all_nn = np.concatenate([self_idx, nn_indices], axis=1)    # (m, k+1)
 
-        mask = candidate_mask[:, i].reshape(-1, 1)
-        Y_new[:, i] = np.sum(kNN_Y * mask, axis=1)
+    valid = np.ones((m, nn_indices.shape[1] + 1), dtype=bool)
+    valid[:, 1:] = nn_indices >= 0                             # (m, k+1)
 
-        if w_cls is not None:
-            Y_new[:, i] = Y_new[:, i] * w_cls
+    safe_idx = np.where(all_nn >= 0, all_nn, 0)               # (m, k+1)
 
-        Y_new[:, i] = Y_new[:, i] / (np.sum(Y_new[:, i]) + eps)
+    Y_nb = Y_last[:, safe_idx]                                 # (Q, m, k+1)
+    Y_nb = Y_nb * valid[np.newaxis, :, :]
 
-    Y_new = candidate_mask * Y_new
+    if r is not None:
+        r_nb = r[safe_idx] * valid                             # (m, k+1)
+        Y_nb = Y_nb * r_nb[np.newaxis, :, :]
+
+    Y_new = np.sum(Y_nb, axis=2)                               # (Q, m)
+    Y_new *= candidate_mask
+
+    if w_cls is not None:
+        Y_new *= w_cls[:, np.newaxis]
+
+    col_sum = np.sum(Y_new, axis=0, keepdims=True) + eps       # (1, m)
+    Y_new /= col_sum
+
+    Y_new *= candidate_mask
 
     D_new = 1 - (Y_new.T @ Y_new)
     np.fill_diagonal(D_new, 0)
@@ -96,7 +104,7 @@ class KNNPropagation(BaseDisambiguator):
         self.alpha = p.get('alpha', 0.5)
         self.eps = p.get('eps', 1e-8)
 
-    def disambiguate(self, Y, E_dist, k, candidate_mask, iteration=0):
+    def disambiguate(self, Y, nn_indices, nn_dists, k, candidate_mask, iteration=0):
         r, w_cls = None, None
 
         use_sr_now = self.use_sample_reliability and (iteration >= self.warmup)
@@ -117,4 +125,5 @@ class KNNPropagation(BaseDisambiguator):
                 w_cls = _compute_class_weights(
                     Y, r_for_cls, self.alpha, self.eps)
 
-        return _update_y(E_dist, Y, k, candidate_mask, r=r, w_cls=w_cls, eps=self.eps)
+        return _update_y(nn_indices, nn_dists, Y, k, candidate_mask,
+                         r=r, w_cls=w_cls, eps=self.eps)

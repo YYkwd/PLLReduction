@@ -42,9 +42,9 @@ def _hsic_solver(X, L, mu, dim_para):
 
     # Center L: HLH where H = I - 1/N * 11^T
     col_mean = L.mean(axis=0, keepdims=True)  # (1, N)
-    tmpL = L - np.tile(col_mean, (N, 1))
+    tmpL = L - col_mean  # broadcasting replaces np.tile
     row_mean = tmpL.mean(axis=1, keepdims=True)  # (N, 1)
-    HLH = tmpL - np.tile(row_mean, (1, N))
+    HLH = tmpL - row_mean  # broadcasting replaces np.tile
 
     S = X @ HLH @ X.T  # (D, D)
     B = mu * (X @ X.T) + (1 - mu) * np.eye(D)  # (D, D)

@@ -1,0 +1,18 @@
+seed: 42
+
+data:
+  data_dir: datasets
+
+preprocessing:
+  method: zscore
+
+eval:
+  protocol: repeated_holdout
+  n_repeats: 5
+  test_ratio: 0.2
+  stratified: true
+
+output:
+  base_dir: results
+  formats:
+    - json

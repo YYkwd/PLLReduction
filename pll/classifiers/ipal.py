@@ -9,6 +9,7 @@ Two phases:
 """
 
 import numpy as np
+import scipy.sparse as sp
 from scipy.optimize import nnls
 from sklearn.neighbors import KDTree
 
@@ -64,17 +65,23 @@ class IPALClassifier:
         row_sum[row_sum == 0] = 1
         y_conf = pt / row_sum
 
-        # Build transition matrix via NNLS
-        trans = np.zeros((M, M))
+        # Build sparse transition matrix via NNLS
+        rows, cols, vals = [], [], []
         for i in range(M):
             nb_data = X_norm[neighbors[i]].T  # (N, k)
             w, _ = nnls(nb_data, X_norm[i])
-            trans[i, neighbors[i]] = w
+            nz = w > 0
+            if nz.any():
+                nb_nz = neighbors[i][nz]
+                rows.extend([i] * nb_nz.shape[0])
+                cols.extend(nb_nz.tolist())
+                vals.extend(w[nz].tolist())
+        trans = sp.csr_matrix((vals, (rows, cols)), shape=(M, M))
 
         # Row-normalize transition matrix
-        row_sum_t = trans.sum(axis=1, keepdims=True)
-        row_sum_t[row_sum_t == 0] = 1
-        trans = trans / row_sum_t
+        row_sum_t = np.asarray(trans.sum(axis=1)).ravel()
+        row_sum_t[row_sum_t == 0] = 1.0
+        trans = sp.diags(1.0 / row_sum_t) @ trans
 
         # Iterative label propagation
         y0 = y_conf.copy()

@@ -24,7 +24,9 @@ if dim_para < 1 % use thr
     thr = dim_para;
     sum_lambda = sum(lambda);
     lambda_num = length(lambda);
-    tmp_lambda = 0;                
+    tmp_lambda = 0;
+    % If the loop never reaches the threshold (numerical edge cases), use full dim (see pll/reducers/sdlpp.py get_proper_dim).
+    proper_dim = lambda_num;
     for lind = 1 : lambda_num
         tmp_lambda = tmp_lambda + lambda(lind);
         if tmp_lambda >= thr * sum_lambda
