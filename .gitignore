@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 results/
+datasets/
 *.egg-info/
 debug*.mat
 matlab/*_results.mat
