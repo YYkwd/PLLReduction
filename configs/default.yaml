@@ -60,6 +60,9 @@ classifier:
 
 eval:
   cv_folds: 5
+  cv_stratified: true
+  cv_stratified_by_dataset:
+    Mirflickr: false
 
 output:
   dir: results

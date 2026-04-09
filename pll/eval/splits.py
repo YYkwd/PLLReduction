@@ -1,7 +1,7 @@
 """Cross-validation splitter and Many/Medium/Few class grouping."""
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold
 
 
 def get_many_medium_few_splits(y, n_classes):
@@ -17,9 +17,25 @@ def get_many_medium_few_splits(y, n_classes):
     return many, medium, few
 
 
-def create_cv_splitter(n_splits=5, shuffle=True, random_state=42, y=None):
+def create_cv_splitter(n_splits=5, shuffle=True, random_state=42, y=None,
+                       stratified=True):
+    """Create a cross-validation splitter.
+
+    Parameters
+    ----------
+    stratified : bool
+        True  -> StratifiedKFold (auto-reduce folds if min class count is too low).
+        False -> plain KFold (ignores class distribution; useful when rare classes
+                 have fewer samples than n_splits, e.g. Mirflickr).
+    """
+    if not stratified:
+        print(f"[CV] non-stratified KFold(n_splits={n_splits})")
+        return KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+
     if y is not None:
-        min_count = int(np.min(np.bincount(y)))
+        counts = np.bincount(y)
+        present_counts = counts[counts > 0]
+        min_count = int(np.min(present_counts))
         if min_count < n_splits:
             actual = max(min_count, 2)
             print(f"[CV] min class count={min_count} < n_splits={n_splits}, "

@@ -5,9 +5,11 @@ to a pluggable BaseDisambiguator instance.
 """
 
 import numpy as np
-from scipy.linalg import eig
+from scipy.linalg import eig, eigh
 
 from .base import BaseReducer
+
+_DIAG = False
 
 
 # ---------------------------------------------------------------------------
@@ -39,11 +41,15 @@ def get_proper_dim(lambda_vals, dim_para):
         return len(lambda_vals)
     if dim_para < 1:
         thr = dim_para
-        sum_lambda = np.sum(lambda_vals)
-        tmp_lambda = 0
+        positive = lambda_vals[lambda_vals > 0]
+        if len(positive) == 0:
+            return len(lambda_vals)
+        sum_pos = float(np.sum(positive))
+        tmp_lambda = 0.0
         for lind in range(len(lambda_vals)):
-            tmp_lambda += lambda_vals[lind]
-            if tmp_lambda >= thr * sum_lambda:
+            if lambda_vals[lind] > 0:
+                tmp_lambda += lambda_vals[lind]
+            if tmp_lambda >= thr * sum_pos:
                 return lind + 1
         return len(lambda_vals)
     return int(dim_para)
@@ -96,33 +102,87 @@ def construct_s(X, D, k):
 
 
 def solve_projection(X, D, S, thr, miu):
-    """Generalized eigenvalue problem: maximize Rayleigh quotient."""
+    """Generalized eigenvalue problem: maximize Rayleigh quotient.
+
+    Regularizes XAXt and prefers eigh (symmetric solver) over eig for
+    numerical stability, matching MATLAB behaviour on ill-conditioned data.
+    """
     B = D - miu * S
     B = (B + B.T) / 2
     sum_B = np.sum(B, axis=1)
-    A = np.diag(sum_B)
-    L = A - B
+    L = np.diag(sum_B) - B
 
     X_t = X.T
-    XLXt = X_t @ L @ X_t.T
-    XLXt = np.maximum(XLXt, XLXt.T)
-    XAXt = X_t @ A @ X_t.T
-    XAXt = np.maximum(XAXt, XAXt.T)
+    # Diagonal-aware multiplication: avoids materialising full m x m A
+    XL = X_t @ L                             # (d, m)
+    XLXt = XL @ X_t.T                        # (d, d)
+    XLXt = np.fmax(XLXt, XLXt.T)            # symmetrise (fmax ignores NaN)
 
-    eigvalues, eigvectors = eig(XLXt, XAXt)
-    eigvalues = np.real(eigvalues)
-    eigvectors = np.real(eigvectors)
+    XA = X_t * sum_B[np.newaxis, :]          # column scaling
+    XAXt = XA @ X_t.T
+    XAXt = np.fmax(XAXt, XAXt.T)
 
-    idx = np.argsort(-eigvalues)
-    eigvalues = eigvalues[idx]
-    eigvectors = eigvectors[:, idx]
+    # Additive regularisation: makes XAXt positive-definite so eigh works
+    tr = np.trace(XAXt)
+    n = XAXt.shape[0]
+    reg = max(1e-10 * tr / n, 1e-14) if tr > 0 else 1e-10
+    XAXt += reg * np.eye(n)
 
+    if _DIAG:
+        n_neg = int(np.sum(sum_B < 0))
+        n_zero = int(np.sum(np.abs(sum_B) < 1e-15))
+        print(f"  [DIAG solve] X shape={X.shape}, sum_B neg={n_neg} zero={n_zero}")
+        print(f"  [DIAG solve] XAXt cond={np.linalg.cond(XAXt):.2e}, "
+              f"XAXt NaN={np.sum(np.isnan(XAXt))}, Inf={np.sum(np.isinf(XAXt))}")
+
+    try:
+        eigvalues, eigvectors = eigh(XLXt, XAXt)
+        # eigh returns ascending order; flip to descending
+        eigvalues = eigvalues[::-1].copy()
+        eigvectors = eigvectors[:, ::-1].copy()
+    except np.linalg.LinAlgError:
+        eigvalues, eigvectors = eig(XLXt, XAXt)
+        eigvalues = np.real(eigvalues)
+        eigvectors = np.real(eigvectors)
+        idx = np.argsort(-eigvalues)
+        eigvalues = eigvalues[idx]
+        eigvectors = eigvectors[:, idx]
+
+    # Drop non-finite eigenvalues and their eigenvectors
+    finite_mask = np.isfinite(eigvalues)
+    if not np.all(finite_mask):
+        eigvalues = eigvalues[finite_mask]
+        eigvectors = eigvectors[:, finite_mask]
+
+    if _DIAG:
+        n_pos = int(np.sum(eigvalues > 0))
+        n_neg_ev = int(np.sum(eigvalues < 0))
+        print(f"  [DIAG eig] eigvals(finite): n={len(eigvalues)} "
+              f"min={eigvalues.min():.4e} max={eigvalues.max():.4e} "
+              f"pos={n_pos} neg={n_neg_ev}")
+
+    # Normalise eigenvectors; zero out degenerate ones
     for j in range(eigvectors.shape[1]):
-        eigvectors[:, j] /= np.linalg.norm(eigvectors[:, j])
+        nrm = np.linalg.norm(eigvectors[:, j])
+        if nrm > 1e-12:
+            eigvectors[:, j] /= nrm
+        else:
+            eigvectors[:, j] = 0.0
 
     proper_dim = get_proper_dim(eigvalues, thr)
+    proper_dim = min(proper_dim, eigvectors.shape[1])
+
+    if _DIAG:
+        print(f"  [DIAG dim] thr={thr}, proper_dim={proper_dim}")
+
     P = eigvectors[:, :proper_dim]
     X_proj = (P.T @ X_t).T
+
+    if _DIAG:
+        n_bad = int(np.sum(~np.isfinite(X_proj)))
+        if n_bad:
+            print(f"  [DIAG proj] WARNING X_proj has {n_bad} non-finite values")
+
     return X_proj, P
 
 
@@ -174,6 +234,9 @@ class SDLPPReducer(BaseReducer):
 
             X_iter, _ = solve_projection(X_iter, D, S, self.thr, self.miu)
             self.Y_history_['Y'].append(Y.copy())
+
+            if not np.all(np.isfinite(X_iter)):
+                break
 
             if X_iter.shape[1] == d_old:
                 break

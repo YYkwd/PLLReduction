@@ -59,7 +59,11 @@ def _minimal_config_skeleton():
             'sr_cb_policy_by_dataset': {},
         },
         'classifier': {'name': 'knn', 'params': {}},
-        'eval': {'cv_folds': 5},
+        'eval': {
+            'cv_folds': 5,
+            'cv_stratified': True,
+            'cv_stratified_by_dataset': {},
+        },
         'output': {'dir': 'results', 'formats': ['json']},
     }
 
@@ -285,11 +289,17 @@ def run(config, *, return_meta=False):
         f"samples={dataset.n_samples} features={dataset.n_features} classes={n_classes}"
     )
 
-    # 2. CV splitter (auto-adapt folds to min class count)
+    # 2. CV splitter
+    eval_cfg = config['eval']
+    use_stratified = eval_cfg.get('cv_stratified', True)
+    per_ds = eval_cfg.get('cv_stratified_by_dataset', {})
+    if isinstance(per_ds, dict) and dataset.name in per_ds:
+        use_stratified = bool(per_ds[dataset.name])
     splitter = create_cv_splitter(
-        n_splits=config['eval']['cv_folds'],
+        n_splits=eval_cfg['cv_folds'],
         random_state=config['seed'],
         y=y,
+        stratified=use_stratified,
     )
 
     fold_metrics = []
