@@ -1,0 +1,14 @@
+model:
+  name: cenda
+  params:
+    T: 50
+    mu: 0.5
+    dim_para: 0.999
+    k: 8
+
+classifier:
+  name: knn
+  params:
+    n_neighbors: 5
+
+method_tag: cenda

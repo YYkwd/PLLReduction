@@ -1,0 +1,13 @@
+model:
+  name: delin
+  params:
+    T: 75
+    ratio: 0.6
+    k: 8
+
+classifier:
+  name: knn
+  params:
+    n_neighbors: 5
+
+method_tag: delin

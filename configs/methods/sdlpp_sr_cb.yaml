@@ -1,0 +1,32 @@
+model:
+  name: sdlpp
+  params:
+    T: 100
+    target_d: 13
+    k: 8
+    miu: 0.1
+    thr: 0.95
+
+disambig:
+  name: knn_propagation
+  params:
+    use_sample_reliability: true
+    use_class_balance: true
+    r_min: 0.1
+    warmup: 5
+    warmup_by_dataset:
+      MSRCv2: 2
+      Soccer Player: 2
+      Yahoo! News: 3
+      Mirflickr: 0
+      slashdotpl-f1: 0
+      slashdotpl-f2: 0
+      slashdotpl-f3: 2
+    alpha: 0.5
+
+classifier:
+  name: knn
+  params:
+    n_neighbors: 5
+
+method_tag: sdlpp_sr_cb

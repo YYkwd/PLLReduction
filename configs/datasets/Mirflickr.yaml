@@ -1,0 +1,7 @@
+data:
+  name: Mirflickr
+
+eval:
+  stratified: false
+
+dataset_note: "Contains classes with <5 samples; results are supplementary only."
