@@ -38,6 +38,7 @@ def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
     """KNN label propagation: aggregate neighbor confidences, mask, normalize.
 
     Vectorized: avoids rebuilding m x m E_dist and per-sample Python loops.
+    Returns only Y_new; the caller computes D on-demand from Y when needed.
     """
     Q, m = Y_last.shape
 
@@ -67,10 +68,7 @@ def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
 
     Y_new *= candidate_mask
 
-    D_new = 1 - (Y_new.T @ Y_new)
-    np.fill_diagonal(D_new, 0)
-
-    return Y_new, D_new
+    return Y_new
 
 
 class KNNPropagation(BaseDisambiguator):

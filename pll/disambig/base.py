@@ -19,7 +19,7 @@ class BaseDisambiguator(ABC):
         k: int,
         candidate_mask: np.ndarray,
         iteration: int = 0,
-    ) -> tuple:
+    ) -> np.ndarray:
         """Update label confidence matrix Y.
 
         Parameters
@@ -34,6 +34,5 @@ class BaseDisambiguator(ABC):
         Returns
         -------
         Y_new : (n_classes, m)
-        D_new : (m, m) semantic dissimilarity
         """
         ...
