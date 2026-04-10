@@ -25,7 +25,8 @@ PllReduction/
 │   │   ├── Mirflickr.yaml           #   含 stratified: false 降级
 │   │   ├── Soccer Player.yaml
 │   │   ├── Yahoo! News.yaml
-│   │   └── slashdotpl-f{1,2,3}.yaml
+│   │   ├── slashdotpl-f{1,2,3}.yaml
+│   │   └── cifar10-lt-g{100,200}-r{1,2,3}.yaml  # CIFAR10 长尾变体
 │   └── methods/                     #   方法配置
 │       ├── sdlpp_baseline.yaml      #   SDLPP 基线（无 SR/CB）
 │       ├── sdlpp_sr_cb.yaml         #   SDLPP + SR + CB（含 warmup_by_dataset）
@@ -34,10 +35,11 @@ PllReduction/
 │
 ├── datasets/                        # 数据集 (.mat 文件)
 │   ├── lost.mat, MSRCv2.mat, ...
-│   └── cifar10/                     #   CIFAR10 长尾 PLL 数据集（需生成）
+│   └── cifar10/                     #   CIFAR10 长尾 PLL 数据集
 │
 ├── experiments/                     # 实验入口
 │   ├── run.py                       #   ★ 统一实验运行器
+│   ├── run_all.sh                   #   ★ 一键全跑脚本（分阶段并行）
 │   ├── analyze_datasets.py          #   数据集分析工具
 │   ├── generate_cifar10_lt_pll.py   #   CIFAR10 长尾 PLL 数据生成
 │   └── generate_cifar10_lt_pll_grid.py  #   批量生成 CIFAR10 数据
@@ -409,40 +411,139 @@ python experiments/generate_cifar10_lt_pll_grid.py \
 
 ### 10.4 在实验中使用 CIFAR10
 
-1. 创建配置 `configs/datasets/cifar10-lt-g100-r2-fast-s42.yaml`：
+已为 6 个主要变体 (gamma=100/200 x r=1/2/3) 创建好配置文件：
 
-```yaml
-data:
-  name: cifar10-lt-g100-r2-fast-s42
-  data_dir: datasets/cifar10
+```
+configs/datasets/
+├── cifar10-lt-g100-r1.yaml    # gamma=100, r=1, seed=42
+├── cifar10-lt-g100-r2.yaml    # gamma=100, r=2, seed=42
+├── cifar10-lt-g100-r3.yaml    # gamma=100, r=3, seed=42
+├── cifar10-lt-g200-r1.yaml    # gamma=200, r=1, seed=42
+├── cifar10-lt-g200-r2.yaml    # gamma=200, r=2, seed=42
+└── cifar10-lt-g200-r3.yaml    # gamma=200, r=3, seed=42
 ```
 
-2. 运行实验：
+运行 CIFAR10 实验（建议在服务器上执行，d=3072 计算量大）：
 
 ```bash
+# 单个变体
 python experiments/run.py \
-    --dataset cifar10-lt-g100-r2-fast-s42 \
+    --dataset cifar10-lt-g100-r2 \
     --method sdlpp_sr_cb \
     --campaign cifar_test
+
+# 全部 6 个变体 SR x CB 消融
+python experiments/run.py \
+    --datasets cifar10-lt-g100-r1 cifar10-lt-g100-r2 cifar10-lt-g100-r3 \
+               cifar10-lt-g200-r1 cifar10-lt-g200-r2 cifar10-lt-g200-r3 \
+    --method sdlpp_sr_cb \
+    --sweep disambig.params.use_sample_reliability=false,true \
+    --sweep disambig.params.use_class_balance=false,true \
+    --n-repeats 5 \
+    --campaign cifar10_ablation_sr_cb
 ```
+
+另有 4 个多 seed 变体 (s43/s44) 的配置用于鲁棒性验证。
 
 ---
 
-## 十一、添加新组件
+## 十一、一键全跑脚本 `run_all.sh`
 
-### 11.1 添加新降维方法
+`experiments/run_all.sh` 整合了全部实验批次，支持分阶段并行执行：
+
+### 11.1 三个阶段
+
+| Phase | 内容 | 批次 | 说明 |
+|-------|------|------|------|
+| 1 | 参数调优 | 1a,1b,2,3a,3b,4a,4b | 7 路并行，无依赖 |
+| 2 | Benchmark + CIFAR10 | 5a,5b,5c,7a,7b | 5 路并行，需 Phase 1 结果 |
+| 3 | 可选精细化 | 6a,6b,7c | 3 路并行 |
+
+### 11.2 基本用法
+
+```bash
+# 预览所有命令（不执行）
+bash experiments/run_all.sh --dry-run
+
+# 执行 Phase 1（调参阶段）
+bash experiments/run_all.sh --phase 1
+
+# 执行 Phase 2（benchmark 阶段）
+bash experiments/run_all.sh --phase 2
+
+# 全部顺序执行
+bash experiments/run_all.sh --phase all
+
+# 只跑某个批次
+bash experiments/run_all.sh --batch 7a
+
+# 指定 Python 解释器
+bash experiments/run_all.sh --phase 1 --python python3
+```
+
+### 11.3 服务器后台运行
+
+```bash
+nohup bash experiments/run_all.sh --phase 1 > run_phase1.log 2>&1 &
+```
+
+### 11.4 推荐工作流
+
+```bash
+# Step 1: 在服务器上跑 Phase 1 调参
+bash experiments/run_all.sh --phase 1
+
+# Step 2: 分析结果，确定最优参数，更新 configs/methods/sdlpp_sr_cb.yaml
+
+# Step 3: 跑 Phase 2 benchmark + CIFAR10
+bash experiments/run_all.sh --phase 2
+
+# Step 4:（可选）Phase 3 精细化
+bash experiments/run_all.sh --phase 3
+```
+
+### 11.5 日志
+
+每个批次的输出记录在 `logs/<timestamp>/<batch_name>.log`。
+
+### 11.6 批次清单
+
+| ID | 名称 | 实验数 | 说明 |
+|----|------|--------|------|
+| 1a | SR x CB 核心数据集 | 24 | 6 核心数据集 x 4 SR/CB 组合 |
+| 1b | SR x CB 大型数据集 | 8 | Soccer + Yahoo x 4 组合 |
+| 2 | warmup 诊断 | 24 | 4 数据集 x 6 warmup 值 |
+| 3a | r_min 敏感性 | 24 | 4 数据集 x 6 r_min 值 |
+| 3b | alpha 敏感性 | 20 | 4 数据集 x 5 alpha 值 |
+| 4a | target_d 扫描 | 24 | 4 数据集 x 6 维度 |
+| 4b | miu 扫描 | 20 | 4 数据集 x 5 miu 值 |
+| 5a | 核心 benchmark | 24 | 6 数据集 x 4 方法 |
+| 5b | 大型 benchmark | 8 | 2 数据集 x 4 方法 |
+| 5c | 分类器对比 | 12 | 3 数据集 x 2 方法 x 2 分类器 |
+| 6a | warmup x r_min 联合 | 18 | 2 数据集 x 3x3 |
+| 6b | 自适应 CB 阈值 | 18 | 2 数据集 x 3x3 |
+| 7a | CIFAR10 SR x CB | 24 | 6 变体 x 4 SR/CB 组合 |
+| 7b | CIFAR10 benchmark | 24 | 6 变体 x 4 方法 |
+| 7c | CIFAR10 多 seed | 4 | 2 变体 x 2 seed |
+| | **合计** | **~296** | |
+
+---
+
+## 十二、添加新组件
+
+### 12.1 添加新降维方法
 
 1. 在 `pll/reducers/` 下创建新文件，继承 `BaseReducer`，实现 `fit(X, partial_target, disambiguator=None)` 和 `transform(X)`
 2. 在 `pll/eval/evaluator.py` 的 `_register_defaults()` 中注册
 3. 创建 `configs/methods/your_method.yaml`
 
-### 11.2 添加新分类器
+### 12.2 添加新分类器
 
 1. 在 `pll/classifiers/` 下创建新文件，实现 `fit(X, y, ...)` 和 `predict(X)`
 2. 若需要 `partial_target`，在 `fit` 签名中添加 `partial_target` 参数（`Evaluator` 会通过 `inspect.signature` 自动检测并传递）
 3. 在 `pll/eval/evaluator.py` 的 `_register_defaults()` 和 `pll/classifiers/__init__.py` 中注册
 
-### 11.3 添加新数据集
+### 12.3 添加新数据集
 
 1. 将 `.mat` 文件放入 `datasets/`（需包含 `data`, `partial_target`, `target` 三个字段）
 2. 创建 `configs/datasets/{name}.yaml`
@@ -450,7 +551,7 @@ python experiments/run.py \
 
 ---
 
-## 十二、后续实验规划
+## 十三、后续实验规划
 
 ### 第一阶段：基线复现与验证（优先级 ★★★）
 
@@ -631,7 +732,7 @@ python experiments/run.py \
 
 ---
 
-## 十三、常见问题 (FAQ)
+## 十四、常见问题 (FAQ)
 
 ### Q1: Mirflickr 精度异常低？
 Mirflickr 包含极稀疏类别（<5 样本），已配置 `stratified: false` 降级为随机分割。结果仅供参考（标有 `*` 前缀）。
