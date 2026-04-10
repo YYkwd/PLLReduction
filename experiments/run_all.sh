@@ -105,8 +105,20 @@ CORE_DATASETS=(lost MSRCv2 Mirflickr slashdotpl-f1 slashdotpl-f2 slashdotpl-f3)
 TUNE_DATASETS=(lost MSRCv2 Mirflickr slashdotpl-f1)
 LARGE_DATASETS=("Soccer Player" "Yahoo! News")
 CIFAR10_DATASETS=(
-    cifar10-lt-g100-r1 cifar10-lt-g100-r2 cifar10-lt-g100-r3
-    cifar10-lt-g200-r1 cifar10-lt-g200-r2 cifar10-lt-g200-r3
+    cifar10-lt-g100-eta0.3-s42 cifar10-lt-g100-eta0.5-s42
+    cifar10-lt-g150-eta0.3-s42 cifar10-lt-g150-eta0.5-s42
+    cifar10-lt-g200-eta0.3-s42 cifar10-lt-g200-eta0.5-s42
+    cifar10-lt-g250-eta0.3-s42 cifar10-lt-g250-eta0.5-s42
+)
+CIFAR10_FAST_DATASETS=(
+    cifar10-lt-g100-eta0.3-fast-s42 cifar10-lt-g100-eta0.5-fast-s42
+    cifar10-lt-g200-eta0.3-fast-s42 cifar10-lt-g200-eta0.5-fast-s42
+)
+CIFAR10_SEED_DATASETS=(
+    cifar10-lt-g100-eta0.3-s43 cifar10-lt-g100-eta0.3-s44
+    cifar10-lt-g100-eta0.5-s43 cifar10-lt-g100-eta0.5-s44
+    cifar10-lt-g200-eta0.3-s43 cifar10-lt-g200-eta0.3-s44
+    cifar10-lt-g200-eta0.5-s43 cifar10-lt-g200-eta0.5-s44
 )
 
 batch_1a() {
@@ -225,8 +237,7 @@ batch_7b() {
 
 batch_7c() {
     run_cmd "7c_cifar10_seeds" $PYTHON experiments/run.py \
-        --datasets cifar10-lt-g100-r2-s43 cifar10-lt-g100-r2-s44 \
-                   cifar10-lt-g200-r2-s43 cifar10-lt-g200-r2-s44 \
+        --datasets "${CIFAR10_SEED_DATASETS[@]}" \
         --method sdlpp_sr_cb \
         --n-repeats 5 --campaign cifar10_seed_robustness
 }
