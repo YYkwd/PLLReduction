@@ -183,14 +183,14 @@ batch_5a() {
     run_cmd "5a_bench_core" $PYTHON experiments/run.py \
         --datasets "${CORE_DATASETS[@]}" \
         --methods sdlpp_baseline sdlpp_sr_cb delin cenda \
-        --n-repeats 10 --campaign benchmark_core_v1
+        --n-repeats 5 --campaign benchmark_core_v1
 }
 
 batch_5b() {
     run_cmd "5b_bench_large" $PYTHON experiments/run.py \
         --datasets "${LARGE_DATASETS[@]}" \
         --methods sdlpp_baseline sdlpp_sr_cb delin cenda \
-        --n-repeats 10 --campaign benchmark_large_v1
+        --n-repeats 5 --campaign benchmark_large_v1
 }
 
 batch_5c() {
@@ -198,7 +198,7 @@ batch_5c() {
         --datasets lost MSRCv2 Mirflickr \
         --methods sdlpp_baseline sdlpp_sr_cb \
         --classifiers knn ipal \
-        --n-repeats 10 --campaign benchmark_clf_v1
+        --n-repeats 5 --campaign benchmark_clf_v1
 }
 
 batch_6a() {
@@ -240,6 +240,13 @@ batch_7c() {
         --datasets "${CIFAR10_SEED_DATASETS[@]}" \
         --method sdlpp_sr_cb \
         --n-repeats 5 --campaign cifar10_seed_robustness
+}
+
+batch_7s() {
+    run_cmd "7s_cifar10_smoke" $PYTHON experiments/run.py \
+        --datasets "${CIFAR10_FAST_DATASETS[@]}" \
+        --methods sdlpp_baseline sdlpp_sr_cb \
+        --fast --campaign cifar_smoke_test
 }
 
 # ============================================================================
@@ -300,6 +307,7 @@ if [[ -n "$BATCH" ]]; then
         7a) batch_7a ;;
         7b) batch_7b ;;
         7c) batch_7c ;;
+        7s) batch_7s ;;
         *)  echo "Unknown batch: $BATCH"; exit 1 ;;
     esac
 elif [[ -n "$PHASE" ]]; then

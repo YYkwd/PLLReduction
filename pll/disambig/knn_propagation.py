@@ -33,8 +33,21 @@ def _class_imbalance_cv(Y, r, eps=1e-8):
     return float(np.std(N_soft) / (np.mean(N_soft) + eps))
 
 
+def _distance_weights(nn_dists, eps=1e-8):
+    """Heat-kernel weights from KNN distances: w = exp(-d^2 / sigma^2).
+
+    sigma is set to the mean of all positive distances (data-adaptive).
+    Returns (m, k) weight array for neighbors (self-weight is always 1).
+    """
+    pos = nn_dists[nn_dists > 0]
+    if pos.size == 0:
+        return np.ones_like(nn_dists)
+    sigma = pos.mean() + eps
+    return np.exp(-(nn_dists ** 2) / (sigma ** 2))
+
+
 def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
-              r=None, w_cls=None, eps=1e-8):
+              r=None, w_cls=None, dist_weights=None, eps=1e-8):
     """KNN label propagation: aggregate neighbor confidences, mask, normalize.
 
     Vectorized: avoids rebuilding m x m E_dist and per-sample Python loops.
@@ -52,6 +65,12 @@ def _update_y(nn_indices, nn_dists, Y_last, k, candidate_mask,
 
     Y_nb = Y_last[:, safe_idx]                                 # (Q, m, k+1)
     Y_nb = Y_nb * valid[np.newaxis, :, :]
+
+    if dist_weights is not None:
+        dw = np.ones((m, nn_indices.shape[1] + 1), dtype=float)
+        dw[:, 1:] = dist_weights                               # self=1, neighbors=heat kernel
+        dw *= valid
+        Y_nb = Y_nb * dw[np.newaxis, :, :]
 
     if r is not None:
         r_nb = r[safe_idx] * valid                             # (m, k+1)
@@ -78,6 +97,9 @@ class KNNPropagation(BaseDisambiguator):
     ------
     use_sample_reliability : bool
     use_class_balance : bool
+    use_distance_weight : bool
+        Heat-kernel weighting of neighbors based on feature-space distance.
+        Independent of SR (can be combined or used alone).
     alpha : float   (class balance exponent, also serves as alpha_max)
     r_min : float   (lower bound for sample reliability)
     warmup : int    (disable SR before this iteration)
@@ -94,6 +116,7 @@ class KNNPropagation(BaseDisambiguator):
         p = self.params
         self.use_sample_reliability = p.get('use_sample_reliability', False)
         self.use_class_balance = p.get('use_class_balance', False)
+        self.use_distance_weight = p.get('use_distance_weight', False)
         self.r_min = p.get('r_min', 0.0)
         self.warmup = p.get('warmup', 0)
         self.cb_adaptive_alpha = p.get('cb_adaptive_alpha', False)
@@ -103,12 +126,15 @@ class KNNPropagation(BaseDisambiguator):
         self.eps = p.get('eps', 1e-8)
 
     def disambiguate(self, Y, nn_indices, nn_dists, k, candidate_mask, iteration=0):
-        r, w_cls = None, None
+        r, w_cls, dw = None, None, None
 
         use_sr_now = self.use_sample_reliability and (iteration >= self.warmup)
 
         if use_sr_now:
             r = _compute_sample_reliability(Y, candidate_mask, self.eps, self.r_min)
+
+        if self.use_distance_weight:
+            dw = _distance_weights(nn_dists, self.eps)
 
         if self.use_class_balance:
             r_for_cls = r if r is not None else np.ones(Y.shape[1])
@@ -124,4 +150,4 @@ class KNNPropagation(BaseDisambiguator):
                     Y, r_for_cls, self.alpha, self.eps)
 
         return _update_y(nn_indices, nn_dists, Y, k, candidate_mask,
-                         r=r, w_cls=w_cls, eps=self.eps)
+                         r=r, w_cls=w_cls, dist_weights=dw, eps=self.eps)
