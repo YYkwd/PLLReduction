@@ -16,12 +16,13 @@ disambig:
     warmup: 5
     warmup_by_dataset:
       MSRCv2: 2
-      Soccer Player: 2
-      Yahoo! News: 3
       Mirflickr: 0
       slashdotpl-f1: 0
-      slashdotpl-f2: 0
-      slashdotpl-f3: 2
+      Soccer Player: 2
+      Yahoo! News: 3
+    # Optional per-dataset overrides (uncomment after sweep; see experiments/REMOTE_EXPERIMENTS.md)
+    # r_min_by_dataset: {}
+    # alpha_by_dataset: {}
     alpha: 0.5
 
 classifier:

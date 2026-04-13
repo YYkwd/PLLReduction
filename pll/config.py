@@ -68,16 +68,30 @@ def load_experiment_config(dataset_name, method_name, cli_overrides=None,
     if cli_overrides:
         deep_merge(cfg, cli_overrides)
 
-    resolve_warmup_by_dataset(cfg, dataset_name)
+    resolve_disambig_params_by_dataset(cfg, dataset_name)
     return cfg
 
 
-def resolve_warmup_by_dataset(cfg, dataset_name):
-    """Replace warmup_by_dataset mapping with the concrete warmup value."""
+def resolve_disambig_params_by_dataset(cfg, dataset_name):
+    """Apply disambig.params.<name>_by_dataset mappings for the active dataset.
+
+    Pops each ``*_by_dataset`` dict and, if ``dataset_name`` is a key, sets
+    ``<name>`` to that value. Supports ``warmup_by_dataset``, ``r_min_by_dataset``,
+    ``alpha_by_dataset``, etc.
+    """
     dp = cfg.get('disambig', {}).get('params', {})
-    by_ds = dp.pop('warmup_by_dataset', None)
-    if by_ds and dataset_name in by_ds:
-        dp['warmup'] = by_ds[dataset_name]
+    if not isinstance(dp, dict):
+        return
+    suffix = '_by_dataset'
+    for k in list(dp.keys()):
+        if not k.endswith(suffix):
+            continue
+        base = k[: -len(suffix)]
+        mapping = dp.pop(k)
+        if not isinstance(mapping, dict):
+            continue
+        if dataset_name in mapping:
+            dp[base] = mapping[dataset_name]
 
 
 def set_nested(d, dotted_path, value):

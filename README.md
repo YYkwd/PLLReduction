@@ -317,7 +317,7 @@ method_tag: sdlpp_sr_cb  # 简短标签，用于输出目录命名
 
 ### 7.5 warmup_by_dataset 机制
 
-`warmup_by_dataset` 允许为不同数据集设置不同的 warmup 值。在配置加载时，`resolve_warmup_by_dataset()` 会根据当前数据集名称，将对应值覆盖到 `disambig.params.warmup`。
+`warmup_by_dataset`、`r_min_by_dataset`、`alpha_by_dataset` 等映射允许按数据集覆盖消歧超参。在配置加载时，`resolve_disambig_params_by_dataset()` 会根据当前数据集名称，将对应值写入 `disambig.params` 中的 `warmup` / `r_min` / `alpha` 等字段。
 
 ---
 
@@ -487,6 +487,8 @@ bash experiments/run_all.sh --phase 1 --python python3
 nohup bash experiments/run_all.sh --phase 1 > run_phase1.log 2>&1 &
 ```
 
+耗时较长的 Phase 1 / `5c` 等，见 [experiments/REMOTE_EXPERIMENTS.md](experiments/REMOTE_EXPERIMENTS.md)。
+
 ### 11.4 推荐工作流
 
 ```bash
@@ -510,22 +512,24 @@ bash experiments/run_all.sh --phase 3
 
 | ID | 名称 | 实验数 | 说明 |
 |----|------|--------|------|
-| 1a | SR x CB 核心数据集 | 24 | 6 核心数据集 x 4 SR/CB 组合 |
+| 1a | SR x CB 核心数据集 | 16 | 4 核心数据集 x 4 SR/CB 组合 |
 | 1b | SR x CB 大型数据集 | 8 | Soccer + Yahoo x 4 组合 |
-| 2 | warmup 诊断 | 24 | 4 数据集 x 6 warmup 值 |
-| 3a | r_min 敏感性 | 24 | 4 数据集 x 6 r_min 值 |
-| 3b | alpha 敏感性 | 20 | 4 数据集 x 5 alpha 值 |
-| 4a | target_d 扫描 | 24 | 4 数据集 x 6 维度 |
-| 4b | miu 扫描 | 20 | 4 数据集 x 5 miu 值 |
-| 5a | 核心 benchmark | 24 | 6 数据集 x 4 方法 |
-| 5b | 大型 benchmark | 8 | 2 数据集 x 4 方法 |
-| 5c | 分类器对比 | 12 | 3 数据集 x 2 方法 x 2 分类器 |
+| 2 | warmup 诊断 | 42 | 6 主表数据集 x 7 warmup 值 |
+| 3a | r_min 敏感性 | 36 | 6 数据集 x 6 r_min 值 |
+| 3b | alpha 敏感性 | 30 | 6 数据集 x 5 alpha 值 |
+| 4a | target_d 扫描 (sr_cb) | 36 | 6 数据集 x 6 维度 |
+| 4b | miu 扫描 | 30 | 6 数据集 x 5 miu 值 |
+| 4c | target_d 扫描 (baseline) | 36 | 6 数据集 x 6 维度（`n_repeats=10`；**单独** `--batch 4c`，未并入 phase 1） |
+| 5a | 核心 SDLPP benchmark | 40 | 4 数据集 x 2 方法 x 5 repeats |
+| 5b | 大型 SDLPP benchmark | 20 | 2 数据集 x 2 方法 x 5 repeats |
+| 5c | 主表分类器对比 | 120 | 6 数据集 x 2 方法 x 2 分类器 x 5 repeats |
 | 6a | warmup x r_min 联合 | 18 | 2 数据集 x 3x3 |
 | 6b | 自适应 CB 阈值 | 18 | 2 数据集 x 3x3 |
 | 7a | CIFAR10 SR x CB | 24 | 6 变体 x 4 SR/CB 组合 |
-| 7b | CIFAR10 benchmark | 24 | 6 变体 x 4 方法 |
+| 7b | CIFAR10 SDLPP benchmark | 60 | 6 变体 x 2 方法 x 5 repeats |
+| 7e | CIFAR ResNet18 + KNN/IPAL | 20 | 1 嵌入集 x 2 方法 x 2 分类器（需先跑嵌入脚本） |
 | 7c | CIFAR10 多 seed | 4 | 2 变体 x 2 seed |
-| | **合计** | **~296** | |
+| | **合计（随批次变动）** | 见各批 | 长任务见 [experiments/REMOTE_EXPERIMENTS.md](experiments/REMOTE_EXPERIMENTS.md) |
 
 ---
 
@@ -558,20 +562,19 @@ bash experiments/run_all.sh --phase 3
 **目标**：在所有可用数据集上建立完整的基线结果，确认 Python 实现与 MATLAB 对齐。
 
 ```bash
-# 1. 全量基线 benchmark（9 个 UCI/真实世界数据集 × 4 方法 × KNN）
+# 1. 主表 SDLPP benchmark（六数据集；slashdot 仅 f1，DELIN/CENDA 需单独命令）
 python experiments/run.py \
-    --datasets lost MSRCv2 FG-NET Mirflickr "Soccer Player" "Yahoo! News" \
-               slashdotpl-f1 slashdotpl-f2 slashdotpl-f3 \
-    --methods sdlpp_baseline sdlpp_sr_cb delin cenda \
+    --datasets lost MSRCv2 Mirflickr slashdotpl-f1 "Soccer Player" "Yahoo! News" \
+    --methods sdlpp_baseline sdlpp_sr_cb \
     --n-repeats 10 \
-    --campaign baseline_all_v1
+    --campaign baseline_main_v1
 
-# 2. KNN vs IPAL 分类器对比
+# 2. KNN vs IPAL（与 run_all.sh batch 5c 一致）
 python experiments/run.py \
-    --datasets lost MSRCv2 FG-NET \
+    --datasets lost MSRCv2 Mirflickr slashdotpl-f1 "Soccer Player" "Yahoo! News" \
     --methods sdlpp_baseline sdlpp_sr_cb \
     --classifiers knn ipal \
-    --campaign classifier_compare_v1
+    --campaign benchmark_clf_main_v1
 ```
 
 **验收标准**：

@@ -9,7 +9,7 @@ end
 sdlpp_dir = fileparts(this_file);
 refes_dir = fileparts(sdlpp_dir);
 proj_root = fileparts(refes_dir);
-data_file = fullfile(proj_root, 'datasets', 'Mirflickr.mat');
+data_file = fullfile(proj_root, 'datasets', 'slashdotpl-f1.mat');
 
 if exist(data_file, 'file') ~= 2
     error('Dataset not found: %s\nEdit data_file in demo.m if your layout differs.', data_file);

@@ -11,3 +11,4 @@ matlab/debug_*.mat
 dist/
 build/
 .Python
+logs/

@@ -33,6 +33,12 @@ python experiments/run.py \\
     --datasets lost --method sdlpp_sr_cb \\
     --sweep disambig.params.r_min=0.0,0.05,0.1,0.2,0.3 \\
     --campaign sweep_rmin
+
+# Baseline SDLPP: reduced dimension target_d (same as run_all.sh batch 4c)
+python experiments/run.py \\
+    --datasets lost MSRCv2 --method sdlpp_baseline \\
+    --sweep model.params.target_d=5,8,13,20,30,50 \\
+    --n-repeats 10 --campaign sweep_baseline_target_d_v1
 """
 
 import argparse
