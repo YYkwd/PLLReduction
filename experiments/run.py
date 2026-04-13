@@ -21,6 +21,12 @@ python experiments/run.py \\
     --datasets lost MSRCv2 --methods sdlpp_baseline \\
     --classifiers knn ipal --campaign clf_compare
 
+# SURE (Feng & An, AAAI'19) after SDLPP: baseline vs SR+CB on Lost / Soccer Player
+python experiments/run.py \\
+    --datasets lost "Soccer Player" \\
+    --methods sdlpp_baseline sdlpp_sr_cb \\
+    --classifiers sure --n-repeats 10 --campaign sure_pll
+
 # SR x CB ablation (Cartesian product)
 python experiments/run.py \\
     --datasets lost MSRCv2 --method sdlpp_sr_cb \\
@@ -44,6 +50,7 @@ python experiments/run.py \\
 import argparse
 import copy
 import itertools
+from collections import OrderedDict
 import logging
 import sys
 import time
@@ -58,6 +65,7 @@ import numpy as np
 from pll.config import (
     load_experiment_config, set_nested, auto_cast,
     canonical_json, compute_config_hash, collect_env_snapshot,
+    reduction_identity_hash,
 )
 from pll.data.loader import load_dataset
 from pll.eval.evaluator import Evaluator
@@ -164,12 +172,39 @@ def build_experiment_grid(args):
                         k, v = kv.split('=', 1)
                         cfg_clf['classifier'].setdefault('params', {})[k] = auto_cast(v)
 
+                if args.fast and clf_name == 'plsvm':
+                    cp = cfg_clf.setdefault('classifier', {}).setdefault('params', {})
+                    t0 = int(cp.get('T', 2000))
+                    cp['T'] = min(t0, 400)
+                if args.fast and clf_name == 'sure':
+                    cp = cfg_clf.setdefault('classifier', {}).setdefault('params', {})
+                    cp['max_iter'] = min(int(cp.get('max_iter', 50)), 12)
+
                 for cfg_swept, slabel in expand_sweep_grid(cfg_clf, sweep_axes):
                     grid.append(ExperimentSpec(
                         dataset=ds, method=m, classifier=clf_name,
                         sweep_label=slabel, config=cfg_swept,
                     ))
     return grid
+
+
+def group_grid_for_shared_reduction(grid: list[ExperimentSpec]):
+    """Group specs that share the same dataset and reduction (all but classifier).
+
+    Yields batches: either ``('single', spec)`` or ``('multi', list[spec])``.
+    Order follows first occurrence of each group key in *grid*.
+    """
+    groups: OrderedDict[tuple, list[ExperimentSpec]] = OrderedDict()
+    for spec in grid:
+        key = (spec.dataset, reduction_identity_hash(spec.config))
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(spec)
+    for specs in groups.values():
+        if len(specs) == 1:
+            yield 'single', specs[0]
+        else:
+            yield 'multi', specs
 
 
 # ---------------------------------------------------------------------------
@@ -269,52 +304,115 @@ def main():
 
     all_summaries = []
     all_outputs = []
+    idx = 0
 
-    for idx, spec in enumerate(grid, 1):
-        label = f'{spec.dataset} / {spec.method} / {spec.classifier}'
-        if spec.sweep_label:
-            label += f' / {spec.sweep_label}'
+    for batch_kind, batch in group_grid_for_shared_reduction(grid):
+        if batch_kind == 'single':
+            spec = batch
+            idx += 1
+            label = f'{spec.dataset} / {spec.method} / {spec.classifier}'
+            if spec.sweep_label:
+                label += f' / {spec.sweep_label}'
 
-        log.info('=' * 70)
-        log.info('START [%d/%d] %s', idx, total, label)
+            log.info('=' * 70)
+            log.info('START [%d/%d] %s', idx, total, label)
 
-        t0 = time.time()
-        try:
-            np.random.seed(spec.config.get('seed', 42))
-            dataset = load_dataset(
-                spec.config['data']['name'],
-                data_dir=spec.config.get('data', {}).get('data_dir', 'datasets'),
-            )
-            evaluator = Evaluator(spec.config)
-            result = evaluator.run(dataset)
-            elapsed = time.time() - t0
+            t0 = time.time()
+            try:
+                np.random.seed(spec.config.get('seed', 42))
+                dataset = load_dataset(
+                    spec.config['data']['name'],
+                    data_dir=spec.config.get('data', {}).get('data_dir', 'datasets'),
+                )
+                evaluator = Evaluator(spec.config)
+                result = evaluator.run(dataset)
+                elapsed = time.time() - t0
 
-            out_dir = save_experiment(
-                result, spec.sweep_label, args.campaign,
-                spec.config.get('output', {}).get('base_dir', 'results'),
-                timestamp,
-            )
+                out_dir = save_experiment(
+                    result, spec.sweep_label, args.campaign,
+                    spec.config.get('output', {}).get('base_dir', 'results'),
+                    timestamp,
+                )
 
-            row = dict(result.summary)
-            row['sweep_params'] = spec.sweep_label
-            row['elapsed_s'] = round(elapsed, 1)
-            all_summaries.append(row)
-            all_outputs.append(str(out_dir))
+                row = dict(result.summary)
+                row['sweep_params'] = spec.sweep_label
+                row['elapsed_s'] = round(elapsed, 1)
+                all_summaries.append(row)
+                all_outputs.append(str(out_dir))
 
+                log.info(
+                    'DONE  [%d/%d] %s | %.1fs | overall=%.4f  balanced=%.4f',
+                    idx, total, label, elapsed,
+                    row.get('overall_acc_mean', 0), row.get('balanced_acc_mean', 0),
+                )
+            except Exception:
+                log.exception('FAIL  [%d/%d] %s', idx, total, label)
+                all_summaries.append({
+                    'dataset': spec.dataset,
+                    'method': spec.method,
+                    'classifier': spec.classifier,
+                    'sweep_params': spec.sweep_label,
+                    'error': True,
+                })
+        else:
+            specs = batch
+            clfs = ', '.join(s.classifier for s in specs)
+            base = specs[0]
+            idx_start = idx + 1
+            idx_end = idx + len(specs)
+            idx = idx_end
+            group_label = f'{base.dataset} / {base.method} / [{clfs}]'
+            if base.sweep_label:
+                group_label += f' / {base.sweep_label}'
+            log.info('=' * 70)
             log.info(
-                'DONE  [%d/%d] %s | %.1fs | overall=%.4f  balanced=%.4f',
-                idx, total, label, elapsed,
-                row.get('overall_acc_mean', 0), row.get('balanced_acc_mean', 0),
+                'START [%d-%d/%d] %s (shared reduction)',
+                idx_start, idx_end, total, group_label,
             )
-        except Exception:
-            log.exception('FAIL  [%d/%d] %s', idx, total, label)
-            all_summaries.append({
-                'dataset': spec.dataset,
-                'method': spec.method,
-                'classifier': spec.classifier,
-                'sweep_params': spec.sweep_label,
-                'error': True,
-            })
+
+            t0 = time.time()
+            try:
+                np.random.seed(base.config.get('seed', 42))
+                dataset = load_dataset(
+                    base.config['data']['name'],
+                    data_dir=base.config.get('data', {}).get('data_dir', 'datasets'),
+                )
+                evaluator = Evaluator(base.config)
+                results = evaluator.run_multi_classifier(
+                    dataset, [s.config for s in specs])
+                elapsed = time.time() - t0
+                per_elapsed = elapsed / len(specs)
+
+                for spec, result in zip(specs, results):
+                    label = f'{spec.dataset} / {spec.method} / {spec.classifier}'
+                    if spec.sweep_label:
+                        label += f' / {spec.sweep_label}'
+                    out_dir = save_experiment(
+                        result, spec.sweep_label, args.campaign,
+                        spec.config.get('output', {}).get('base_dir', 'results'),
+                        timestamp,
+                    )
+                    row = dict(result.summary)
+                    row['sweep_params'] = spec.sweep_label
+                    row['elapsed_s'] = round(per_elapsed, 1)
+                    row['shared_reduction_group'] = True
+                    all_summaries.append(row)
+                    all_outputs.append(str(out_dir))
+                    log.info(
+                        'DONE  %s | ~%.1fs (shared batch) | overall=%.4f  balanced=%.4f',
+                        label, per_elapsed,
+                        row.get('overall_acc_mean', 0), row.get('balanced_acc_mean', 0),
+                    )
+            except Exception:
+                log.exception('FAIL  [%d-%d/%d] %s', idx_start, idx_end, total, group_label)
+                for spec in specs:
+                    all_summaries.append({
+                        'dataset': spec.dataset,
+                        'method': spec.method,
+                        'classifier': spec.classifier,
+                        'sweep_params': spec.sweep_label,
+                        'error': True,
+                    })
 
     wall = time.time() - session_t0
     log.info('=' * 70)

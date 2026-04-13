@@ -1,0 +1,23 @@
+# SDLPP + Nguyen & Caruana PL-SVM (linear PL-Pegasos). Classifier defaults match pll.classifiers.pl_svm.
+model:
+  name: sdlpp
+  params:
+    T: 100
+    target_d: 13
+    k: 8
+    miu: 0.1
+    thr: 0.95
+
+disambig:
+  name: knn_propagation
+  params:
+    use_sample_reliability: false
+    use_class_balance: false
+
+classifier:
+  name: plsvm
+  params:
+    lambda_reg: 0.01
+    T: 2000
+
+method_tag: sdlpp_plsvm

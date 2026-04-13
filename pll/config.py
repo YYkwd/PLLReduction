@@ -146,6 +146,13 @@ def compute_config_hash(config):
     return hashlib.sha256(canonical_json(config).encode('utf-8')).hexdigest()
 
 
+def reduction_identity_hash(config):
+    """Hash of config with classifier removed — identical iff same preprocess/reduce/disambig."""
+    c = copy.deepcopy(config)
+    c.pop('classifier', None)
+    return compute_config_hash(c)
+
+
 def collect_env_snapshot():
     snap = {
         'python': sys.version.split()[0],
