@@ -30,7 +30,7 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --phase PHASE   Run a full phase (1, 2, 3, or all)"
-    echo "  --batch ID      Run a single batch (1a,1b,2,3a,3b,4a,4b,4c,5a,5b,5c,5s,6a,6b,7a,7b,7c,7e,7s)"
+    echo "  --batch ID      Run a single batch (1a,1b,2,3a,3b,4a,4b,4c,5a,5b,5c,6a,6b,7a,7b,7c,7e,7s)"
     echo "  --dry-run       Print commands without executing"
     echo "  --python PATH   Python interpreter (default: python)"
     echo ""
@@ -48,7 +48,6 @@ usage() {
     echo "    5a  Core SDLPP benchmark (baseline + sr_cb, 4 datasets)"
     echo "    5b  Large SDLPP benchmark (2 datasets)"
     echo "    5c  Main classifier comparison: 6 datasets x SDLPP x KNN/IPAL"
-    echo "    5s  SURE clf: Lost + Soccer Player x SDLPP baseline vs SR+CB"
     echo "    7a  CIFAR10 SR x CB ablation"
     echo "    7b  CIFAR10 SDLPP-only benchmark"
     echo "    7e  CIFAR10 ResNet18 embedding x SDLPP x KNN/IPAL (needs .mat from cifar10_mat_to_resnet18.py)"
@@ -217,15 +216,6 @@ batch_5c() {
         --n-repeats 5 --campaign benchmark_clf_main_v1
 }
 
-# SURE (AAAI'19) on tabular PLL sets requested for paper-style comparison
-batch_5s() {
-    run_cmd "5s_sure_lost_soccer" $PYTHON experiments/run.py \
-        --datasets lost "Soccer Player" \
-        --methods sdlpp_baseline sdlpp_sr_cb \
-        --classifiers sure \
-        --n-repeats 10 --campaign benchmark_sure_lost_soccer_v1
-}
-
 batch_6a() {
     run_cmd "6a_joint_warmup_rmin" $PYTHON experiments/run.py \
         --datasets MSRCv2 slashdotpl-f1 \
@@ -337,7 +327,6 @@ if [[ -n "$BATCH" ]]; then
         5a) batch_5a ;;
         5b) batch_5b ;;
         5c) batch_5c ;;
-        5s) batch_5s ;;
         6a) batch_6a ;;
         6b) batch_6b ;;
         7a) batch_7a ;;

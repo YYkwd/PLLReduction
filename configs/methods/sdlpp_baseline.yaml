@@ -3,6 +3,11 @@ model:
   params:
     T: 100
     target_d: 13
+    target_d_by_dataset:
+      lost: 20
+      MSRCv2: 8
+      Soccer Player: 50
+      Yahoo! News: 50
     k: 8
     miu: 0.1
     thr: 0.95

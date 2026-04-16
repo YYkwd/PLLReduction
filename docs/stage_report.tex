@@ -1,0 +1,470 @@
+%==============================================================================
+% 阶段性实验汇报：SDLPP 降维 + KNN 消歧改进（SR / CB）
+% Overleaf：Menu -> Compiler 选「XeLaTeX」或「LuaLaTeX」（配合 ctex 中文）。
+% 若仅用 pdfLaTeX，请删除 \usepackage[UTF8]{ctex} 并将正文改为英文或自行换 fontspec。
+%==============================================================================
+\documentclass[11pt,a4paper]{article}
+\usepackage[UTF8]{ctex}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{array}
+\geometry{margin=2.2cm}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\title{\textbf{部分标签学习中的 SDLPP 降维与消歧改进\\阶段性实验汇报}}
+\author{（课题组汇报稿）}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本文档系统梳理当前已完成的实验 campaign、默认与探索性配置、
+数据集统计特征、SR/CB 实现与理论表述，并给出可汇报的结论、
+不理想结果的原因分析及下一步计划。
+\textbf{CIFAR10 表征实验尚未纳入主结果链}，仅在计划中说明。
+SR$\times$CB 在六数据集、三分类器下的系统消融见第~\ref{sec:ablation-full}节（\texttt{ablation\_sr\_cb\_all\_clf\_r10}）。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%------------------------------------------------------------------------------
+\section{研究背景与目标}
+%------------------------------------------------------------------------------
+
+\subsection{问题设定}
+给定部分标签训练集 $\{(x_i, S_i)\}_{i=1}^m$，其中 $S_i \subseteq \{1,\ldots,Q\}$ 为候选标签集合，
+真标签 $y_i \in S_i$ 未知。SDLPP 在迭代中求解低维投影并配合 KNN 标签传播对候选分布 $Y$ 进行消歧，
+最终在低维特征上训练下游分类器（kNN、IPAL、PL-SVM、SURE 等）。
+
+\subsection{阶段目标}
+\begin{itemize}
+  \item 在统一评估协议下对比 \textbf{baseline SDLPP 消歧}（无 SR/CB）与 \textbf{SR+CB} 变体；
+  \item 在多数据集上观察 \textbf{balanced accuracy} 与 \textbf{长尾 few 类} 指标；
+  \item 记录消融与参数敏感性，支撑论文/答辩中的条件性结论（非全称「处处更优」）。
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{当前实验设置}
+%------------------------------------------------------------------------------
+
+\subsection{评估协议（默认）}
+\begin{itemize}
+  \item \textbf{协议：} \texttt{repeated\_holdout}（\texttt{configs/base.yaml}）
+  \item \textbf{划分：} \texttt{test\_ratio=0.2}，\texttt{stratified=true}
+  \item \textbf{重复次数：} 主表 \texttt{n\_repeats=10}；部分早期消融/诊断为 $5$ 次（见各 \texttt{campaign\_summary.csv}）
+  \item \textbf{随机种子：} \texttt{seed=42}（\texttt{run.py} 可覆盖）
+  \item \textbf{预处理：} 特征 Z-score（\texttt{pll/data/preprocessor.py}）
+\end{itemize}
+
+\subsection{SDLPP 与下游维度（实现核对）}
+\begin{itemize}
+  \item 日志中 \texttt{SDLPP fit: dim 48->19} 等为迭代过程中由阈值 \texttt{thr} 控制的\textbf{中间维}，不等同于最终分类输入维。
+  \item 最终投影矩阵 $P$ 由 \texttt{solve\_projection(..., target\_d)} 确定；当 \texttt{target\_d} 为正整数时，\textbf{下游分类器输入维度等于 \texttt{target\_d}}。
+  \item \textbf{\texttt{dim\_out}}：在 \texttt{pll/eval/evaluator.py} 中记录为 \texttt{X\_train\_low.shape[1]}，与上述最终维一致；\textbf{evaluator 中无额外按 $d$ 截断}。
+  \item 结果 CSV 中 \texttt{dim\_out} 列与 \texttt{model.params.target\_d}（及 sweep 覆盖值）一致（见 \texttt{results/msrcv2\_target\_d\_8\_13\_v1/campaign\_summary.csv} 中 \texttt{target\_d} 与 \texttt{dim\_out} 列）。
+\end{itemize}
+
+\subsection{方法配置：默认 vs 探索}
+
+\paragraph{Baseline（\texttt{sdlpp\_baseline.yaml}）}
+\texttt{disambig.use\_sample\_reliability=false}，\texttt{use\_class\_balance=false}；
+\texttt{target\_d\_by\_dataset}：lost=20，MSRCv2=8，Soccer/Yahoo=50，其余默认 13。
+
+\paragraph{SR+CB（\texttt{sdlpp\_sr\_cb.yaml}，当前默认）}
+\texttt{use\_sample\_reliability=true}，\texttt{use\_class\_balance=true}；
+\texttt{r\_min=0.1}，\texttt{lost} 上 \texttt{r\_min=0.2}；\texttt{alpha=0.5}，\texttt{lost} 上 \texttt{alpha=0.3}；
+\texttt{warmup\_by\_dataset}（MSRCv2=2，Mirflickr/slashdot=0，Soccer=2，Yahoo=3 等）；
+\texttt{use\_distance\_weight=false}（\textbf{已关闭}；此前 MSRCv2 曾单独开启，现已移除）。
+\texttt{target\_d\_by\_dataset} 与 baseline \textbf{对齐}：含 MSRCv2=8。
+
+\paragraph{探索性/历史配置（非当前主表默认）}
+\begin{itemize}
+  \item \textbf{\texttt{sweep\_*}}、\texttt{diag\_warmup\_v1}、\texttt{tune\_warmup\_high\_d\_v1}：参数网格；
+  \item \textbf{\texttt{ablation\_sr\_cb\_*}}：固定 \texttt{target\_d=13}（中小四集）或默认维（大集），\textbf{与主表 per-dataset $d$ 不同}，用于理解 SR/CB 开关机理；
+  \item \textbf{\texttt{main\_table\_v1}} 中 MSRCv2 的 \texttt{sdlpp\_sr\_cb} 行曾对应 \texttt{dim\_out=13}（yaml 未写 MSRCv2 覆盖前）且可能含 \texttt{dist\_weight}；\textbf{以修正后 yaml + \texttt{msrcv2\_target\_d\_8\_13\_v1} 为当前权威 MSRCv2 对比}。
+  \item \textbf{CIFAR：} \texttt{cifar10\_*} 为独立分支，未完成 ResNet18 主链。
+\end{itemize}
+
+\subsection{下游分类器}
+\begin{itemize}
+  \item \textbf{kNN：} \texttt{n\_neighbors=5}（方法 yaml 默认）
+  \item \textbf{IPAL / PL-SVM：} 见 \texttt{pll/classifiers/}
+  \item \textbf{SURE：} 核/线性由 \texttt{classifier.params.use\_kernel} 控制；大集核 SURE 见 \texttt{sure\_kernel\_large\_v1}
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{数据集说明}
+%------------------------------------------------------------------------------
+
+表~\ref{tab:dataset-stats} 摘录 \texttt{results/analysis/dataset\_analysis.csv}（FG-NET、slashdot f2/f3 未进主实验链）。
+
+\begin{table}[htbp]
+\centering
+\caption{数据集基础统计（节选）}
+\label{tab:dataset-stats}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+数据集 & $m$ & 原始维 & $Q$ & eff.\ rank & IR\footnotemark & 平均候选数 \\
+\midrule
+lost & 1122 & 108 & 16 & 20.5 & 11.3 & 2.23 \\
+MSRCv2 & 1758 & 48 & 23 & 12.6 & 85.0 & 3.16 \\
+Mirflickr & 2780 & 1536 & 14 & 159.0 & 392 & 2.76 \\
+slashdotpl-f1 & 3142 & 1079 & 19 & 600.5 & 262.5 & 2.00 \\
+Soccer Player & 17472 & 279 & 171 & 102.8 & 954.3 & 2.09 \\
+Yahoo! News & 22991 & 163 & 219 & 80.0 & 308.8 & 1.91 \\
+\bottomrule
+\end{tabular}
+\footnotetext{IR = imbalance ratio（分析脚本定义，见 \texttt{dataset\_analysis.csv}）}
+\end{table}
+
+\noindent\textbf{任务类型（文献/常用归类）：}
+MSRCv2 为\textbf{图像块级物体共现}；lost / Soccer / Yahoo 多为\textbf{人脸-姓名/自动人脸标注}；
+Mirflickr 为\textbf{网络图像多标签}；slashdot 为\textbf{文本/社交标注}。
+特征复杂度：Mirflickr 高维稀疏语义、MSRCv2 低维颜色纹理、Soccer/Yahoo 中高维但类数极大。
+
+%------------------------------------------------------------------------------
+\section{方法说明：Baseline 与 SR+CB}
+%------------------------------------------------------------------------------
+
+\subsection{KNN 标签传播（公共骨架）}
+记 $Y \in \mathbb{R}^{Q \times m}$ 为候选上的非负置信矩阵（列归一且在候选外为 0）。
+对样本 $i$，取其 $k$ 个近邻索引与距离，聚合邻域置信并再次掩码、归一化（\texttt{\_update\_y}）。
+
+\subsection{样本可靠性 SR（实现与动机）}
+\textbf{动机：} 候选越多且分布越均匀，熵越高，传播权重应降低，避免噪声邻域主导更新。
+
+记 $Y\in\mathbb{R}^{Q\times m}$，列 $i$ 仅在候选集 $S_i$ 上非零且列和为 $1$。对样本 $i$，
+候选数 $n_i=|S_i|$，香农熵（按列）
+\begin{equation}
+H_i = -\sum_{k=1}^{Q} Y_{ki}\log(Y_{ki}+\varepsilon).
+\end{equation}
+归一化熵（与最大熵 $\log n_i$ 比较）为
+\begin{equation}
+\tilde{H}_i =
+\begin{cases}
+0, & n_i \le 1,\\
+\displaystyle\frac{H_i}{\log(n_i+\varepsilon)+\varepsilon}, & n_i>1 .
+\end{cases}
+\end{equation}
+（分母中额外 $+\varepsilon$ 与实现 \texttt{knn\_propagation.py} 一致。）
+样本可靠性
+\begin{equation}
+r_i = \mathrm{clip}\bigl(1-\tilde{H}_i,\; r_{\min},\, 1\bigr),\qquad r_{\min}\in[0,1].
+\end{equation}
+当迭代次数 $<$ \texttt{warmup} 时\textbf{不启用} SR（不向 \texttt{\_update\_y} 传入 $r$）。
+
+传播时对每个邻域列 $i'$ 的置信向量乘以标量 $r_{i'}$。\textbf{该形式为启发式正则}，可与「高熵样本不可靠」的直观一致，但\textbf{并非}从单一能量函数严格推导所得。
+
+\subsection{类别均衡 CB（实现与动机）}
+\textbf{动机：} 用软占用刻画各类在传播中的「有效样本量」，对占用低的类放大其列权重。
+
+定义（与代码 \texttt{np.sum(r * Y, axis=1)} 一致）
+\begin{equation}
+N_k^{\mathrm{soft}} = \sum_{i=1}^{m} r_i\, Y_{ki},\qquad k=1,\ldots,Q.
+\end{equation}
+（若未启用 SR，则实现中取 $r_i\equiv 1$，退化为 $\sum_i Y_{ki}$。）
+\begin{equation}
+w_k = \frac{1}{\bigl(N_k^{\mathrm{soft}}+\varepsilon\bigr)^{\alpha}},\qquad
+w_k \leftarrow \frac{w_k}{\frac{1}{Q}\sum_{j=1}^{Q} w_j+\varepsilon}.
+\end{equation}
+聚合后、列归一化前对各类乘 $w_k$：$\tilde{Y}_{ki}=w_k \bar{Y}_{ki}$，再按列归一化并掩码候选外为 $0$。
+可选 \texttt{cb\_adaptive\_alpha} 用 $N_k^{\mathrm{soft}}$ 的变异系数调节有效 $\alpha$（默认关闭）。
+
+\subsection{距离加权（可选，当前默认关闭）}
+对邻域乘以热核权重 $\exp(-d^2/\sigma^2)$，$\sigma$ 为邻域距离均值。
+可与 SR/CB 独立组合；\textbf{当前 \texttt{sdlpp\_sr\_cb.yaml} 已全局关闭}。
+
+%------------------------------------------------------------------------------
+\section{已完成实验 Campaign 一览}
+%------------------------------------------------------------------------------
+
+表~\ref{tab:campaigns} 列出 \texttt{results/} 下主要目录及目的。
+\textbf{重复与冲突：} \texttt{benchmark\_*} 与 \texttt{main\_table\_v1} 主题重叠，以 \texttt{main\_table\_v1} 为六数据集主结果；
+\texttt{verify\_high\_d} 与主表在 Soccer/Yahoo 上均涉及 $d\in\{30,50\}$ 或 $d=50$，后者为最终 yaml；
+MSRCv2 以 \texttt{msrcv2\_target\_d\_8\_13\_v1} 覆盖主表中过时的 sr\_cb 维度假设。
+
+\begin{table}[htbp]
+\centering
+\caption{主要结果目录与目的（节选）}
+\label{tab:campaigns}
+\small
+\begin{tabular}{p{4.2cm}p{9.5cm}}
+\toprule
+目录 & 目的 \\
+\midrule
+\texttt{main\_table\_v1} & 六数据集 $\times$ baseline/sr\_cb $\times$ knn/ipal/plsvm，$R{=}10$；含 \texttt{dim\_out} \\
+\texttt{msrcv2\_target\_d\_8\_13\_v1} & MSRCv2 上 $d\in\{8,13\}$ 公平对比，无 dist\_weight，$R{=}10$ \\
+\texttt{ablation\_sr\_cb\_core\_v2} & 四核心集，SR$\times$CB，\textbf{仅 knn}，$R{=}5$，$d{=}13$（与主表 lost 维不一致） \\
+\texttt{ablation\_sr\_cb\_large\_v2} & Soccer/Yahoo，同上，$R{=}5$ \\
+\texttt{ablation\_sr\_cb\_all\_clf\_r10} & \textbf{六数据集} $\times$ SR$\times$CB 四组合 $\times$ knn/ipal/plsvm，$R{=}10$，各集 \texttt{target\_d} 与主表 yaml 一致；结果见表~\ref{tab:ablation-ff-tt} \\
+\texttt{verify\_core\_d\_clf\_v1} & lost/MSRCv2，$d\in\{8,13,20\}$，knn/ipal \\
+\texttt{verify\_high\_d\_clf\_v1} & Soccer/Yahoo，$d\in\{30,50\}$，knn/ipal \\
+\texttt{sweep\_rmin\_v1}, \texttt{sweep\_alpha\_v1} & 全局 $r_{\min}$ / $\alpha$ 网格 \\
+\texttt{sweep\_baseline\_target\_d\_v1} & baseline 的 \texttt{target\_d} 扫描 \\
+\texttt{diag\_warmup\_v1}, \texttt{tune\_warmup\_high\_d\_v1} & warmup 敏感性 \\
+\texttt{sr\_distweight\_verify\_uci} & SR/CB/dist\_weight 组合（历史，用于 MSRCv2 讨论） \\
+\texttt{sure\_kernel\_small\_v1}, \texttt{sure\_kernel\_large\_v1} & 核 SURE，中小/大集 \\
+\texttt{lost\_sr\_cb\_svm\_check} 等 & PL-SVM 与 lost 上的补充 \\
+\texttt{cifar10\_*} & CIFAR 像素基线（\textbf{未完成 ResNet18 主计划}） \\
+\midrule
+\multicolumn{2}{l}{\emph{其余含 \texttt{campaign\_summary.csv} 的目录：}
+\texttt{sweep\_target\_d\_v1}, \texttt{sweep\_miu\_v1},
+\texttt{benchmark\_clf\_v1}, \texttt{benchmark\_clf\_main\_v1},
+\texttt{lost\_dim\_svm\_check}, \texttt{verify\_sure\_lost\_soccer},
+\texttt{sr\_distweight\_verify\_cifar}, \texttt{test\_plsvm\_smoke},
+\texttt{\_smoke\_shared\_reduction} 等，多为诊断/网格/冒烟。} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{实验结果表格}
+%------------------------------------------------------------------------------
+
+\subsection{主结果表（\texttt{main\_table\_v1}，$R{=}10$）}
+表~\ref{tab:main} 数值来自 \texttt{results/main\_table\_v1/campaign\_summary.csv}（保留三位小数）。
+\textbf{MSRCv2} 因历史主表曾出现 baseline 与 sr\_cb 的 \texttt{dim\_out} 不一致，已自表~\ref{tab:main} 中\textbf{拆出}，
+统一在表~\ref{tab:msrcv2-d} 给出 \texttt{msrcv2\_target\_d\_8\_13\_v1} 上的公平维、三分类器对照。
+
+\begin{table}[htbp]
+\centering
+\caption{主结果（knn/ipal；Ov=overall\_acc，Bal=balanced\_acc，Few=few\_acc；不含 MSRCv2）}
+\label{tab:main}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccccc}
+\toprule
+Dataset & Method & clf & $d_{\mathrm{out}}$ & Ov $\pm$std & Bal $\pm$std & Few $\pm$std \\
+\midrule
+lost* & baseline & knn & 20 & $0.779{\pm}0.028$ & $0.678{\pm}0.043$ & $0.401{\pm}0.083$ \\
+lost* & sr\_cb & knn & 20 & $0.778{\pm}0.034$ & $0.679{\pm}0.046$ & $0.391{\pm}0.138$ \\
+lost* & baseline & ipal & 20 & $0.792{\pm}0.018$ & $0.714{\pm}0.031$ & $0.460{\pm}0.106$ \\
+lost* & sr\_cb & ipal & 20 & $0.794{\pm}0.025$ & $\mathbf{0.728{\pm}0.035}$ & $\mathbf{0.539{\pm}0.153}$ \\
+Mirflickr* & baseline & knn & 13 & $0.570{\pm}0.018$ & $0.446{\pm}0.015$ & $0.015{\pm}0.022$ \\
+Mirflickr* & sr\_cb & knn & 13 & $0.551{\pm}0.023$ & $0.441{\pm}0.022$ & $0.043{\pm}0.053$ \\
+Mirflickr* & baseline & ipal & 13 & $0.480{\pm}0.027$ & $0.460{\pm}0.034$ & $0.099{\pm}0.081$ \\
+Mirflickr* & sr\_cb & ipal & 13 & $0.444{\pm}0.018$ & $\mathbf{0.502{\pm}0.034}$ & $\mathbf{0.206{\pm}0.140}$ \\
+slashdot* & baseline & knn & 13 & $0.486{\pm}0.016$ & $0.328{\pm}0.017$ & $0.152{\pm}0.037$ \\
+slashdot* & sr\_cb & knn & 13 & $0.474{\pm}0.015$ & $0.315{\pm}0.013$ & $0.136{\pm}0.037$ \\
+Soccer & baseline & knn & 50 & $0.539{\pm}0.005$ & $0.166{\pm}0.007$ & $0.086{\pm}0.014$ \\
+Soccer & sr\_cb & knn & 50 & $0.549{\pm}0.006$ & $\mathbf{0.169{\pm}0.011}$ & $\mathbf{0.090{\pm}0.017}$ \\
+Yahoo & baseline & knn & 50 & $0.602{\pm}0.007$ & $0.560{\pm}0.015$ & $0.465{\pm}0.026$ \\
+Yahoo & sr\_cb & knn & 50 & $0.606{\pm}0.009$ & $\mathbf{0.569{\pm}0.016}$ & $0.465{\pm}0.024$ \\
+Yahoo & baseline & ipal & 50 & $0.656{\pm}0.007$ & $0.579{\pm}0.018$ & $0.480{\pm}0.031$ \\
+Yahoo & sr\_cb & ipal & 50 & $0.655{\pm}0.007$ & $\mathbf{0.584{\pm}0.015}$ & $\mathbf{0.491{\pm}0.019}$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\noindent\emph{注：} Yahoo + knn 上 few 与 baseline 几乎持平（约 $0.465$），主汇报宜强调 \textbf{balanced} 与 ipal 路径上的 few。
+
+\begin{table}[htbp]
+\centering
+\caption{MSRCv2：$d\in\{8,13\}$ 下 baseline / sr\_cb $\times$ knn/ipal/plsvm（\texttt{msrcv2\_target\_d\_8\_13\_v1}，$R{=}10$，无 dist\_weight；由原表三 MSRCv2 行与表四维数对照合并）}
+\label{tab:msrcv2-d}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ccclll}
+\toprule
+$d$ & Method & clf & Ov $\pm$std & Bal $\pm$std & Few $\pm$std \\
+\midrule
+8 & baseline & knn & $0.459{\pm}0.031$ & $0.313{\pm}0.039$ & $0.167{\pm}0.070$ \\
+8 & sr\_cb & knn & $0.473{\pm}0.055$ & $\mathbf{0.345{\pm}0.052}$ & $\mathbf{0.202{\pm}0.076}$ \\
+8 & baseline & ipal & $0.391{\pm}0.033$ & $0.255{\pm}0.027$ & $0.089{\pm}0.044$ \\
+8 & sr\_cb & ipal & $0.383{\pm}0.032$ & $\mathbf{0.262{\pm}0.033}$ & $\mathbf{0.113{\pm}0.052}$ \\
+8 & baseline & plsvm & $0.357{\pm}0.048$ & $\mathbf{0.181{\pm}0.031}$ & $0.000{\pm}0.000$ \\
+8 & sr\_cb & plsvm & $0.284{\pm}0.070$ & $0.154{\pm}0.038$ & $0.000{\pm}0.000$ \\
+\midrule
+13 & baseline & knn & $0.431{\pm}0.045$ & $0.305{\pm}0.045$ & $0.208{\pm}0.033$ \\
+13 & sr\_cb & knn & $0.443{\pm}0.040$ & $\mathbf{0.319{\pm}0.042}$ & $0.172{\pm}0.052$ \\
+13 & baseline & ipal & $0.342{\pm}0.037$ & $0.243{\pm}0.034$ & $0.107{\pm}0.062$ \\
+13 & sr\_cb & ipal & $0.347{\pm}0.049$ & $\mathbf{0.256{\pm}0.033}$ & $\mathbf{0.115{\pm}0.049}$ \\
+13 & baseline & plsvm & $0.289{\pm}0.075$ & $\mathbf{0.164{\pm}0.041}$ & $0.008{\pm}0.013$ \\
+13 & sr\_cb & plsvm & $0.274{\pm}0.044$ & $0.155{\pm}0.026$ & $0.003{\pm}0.009$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\noindent\textbf{说明：} \textbf{knn：} 两种 $d$ 下 sr\_cb 的 balanced 均高于 baseline；$d{=}13$ 时 baseline 的 few 高于 sr\_cb，与 $d{=}8$ 相反。
+\textbf{ipal / plsvm：} $d{=}8$、$13$ 上 ipal 的 balanced（及 few）均为 sr\_cb 略优或持平；plsvm 上 sr\_cb 的 balanced 均低于 baseline。
+\textbf{历史主表（已不采用）：} \texttt{main\_table\_v1} 曾将 baseline knn（$d{=}8$）与 sr\_cb knn（$d{=}13$）并列，属非公平维，汇报时\textbf{只引用本表}。
+
+\subsection{完整 SR$\times$CB 消融（\texttt{ablation\_sr\_cb\_all\_clf\_r10}，$R{=}10$）}
+\label{sec:ablation-full}
+
+于 2026-04-14 完成 campaign \texttt{ablation\_sr\_cb\_all\_clf\_r10}：
+六数据集（lost、MSRCv2、Mirflickr、slashdotpl-f1、Soccer Player、Yahoo! News），
+方法 \texttt{sdlpp\_sr\_cb}，\texttt{disambig} 上 SR、CB 各 $\{\mathrm{F},\mathrm{T}\}$ 四组合，
+分类器 knn / ipal / plsvm，\textbf{共享降维}（同数据集同 SR/CB 下三分类器一次 SDLPP），
+\texttt{n\_repeats=10}，\texttt{dim\_out} 与当前 yaml 一致（lost 20，MSRCv2 8，Mirflickr/slashdot 13，Soccer/Yahoo 50）。
+原始日志：\texttt{logs/ablation\_sr\_cb\_all\_clf\_r10\_20260414\_131802.log}；
+汇总：\texttt{results/ablation\_sr\_cb\_all\_clf\_r10/campaign\_summary.csv}。
+\texttt{session\_manifest.json} 记录总墙钟约 \textbf{11115\,s}（$\approx$3.1\,h），72 组实验全部成功。
+
+表~\ref{tab:ablation-ff-tt} 对比\textbf{无 SR/CB}（SR=F, CB=F，即消歧中关闭两开关）与\textbf{全开}（SR=T, CB=T），
+便于与主表「full sr\_cb」对照；中间组合（仅 CB、仅 SR）见 CSV。
+
+\begin{table}[htbp]
+\centering
+\caption{SR/CB 消融：$\mathrm{SR}{=}\mathrm{F},\mathrm{CB}{=}\mathrm{F}$ vs $\mathrm{SR}{=}\mathrm{T},\mathrm{CB}{=}\mathrm{T}$（$R{=}10$，Bal / Few）}
+\label{tab:ablation-ff-tt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccccl}
+\toprule
+Dataset & clf &
+\multicolumn{2}{c}{balanced} & \multicolumn{2}{c}{few} &
+备注 \\
+& & F,F & T,T & F,F & T,T & \\
+\midrule
+lost & knn & $0.678{\pm}0.043$ & $0.679{\pm}0.046$ & $0.401{\pm}0.083$ & $0.391{\pm}0.138$ & 基本持平 \\
+lost & ipal & $0.714{\pm}0.031$ & $\mathbf{0.728{\pm}0.035}$ & $0.460{\pm}0.106$ & $\mathbf{0.539{\pm}0.153}$ & SR+CB 明显更优 \\
+lost & plsvm & $\mathbf{0.710{\pm}0.041}$ & $0.706{\pm}0.036$ & $\mathbf{0.497{\pm}0.143}$ & $0.465{\pm}0.090$ & 全开略低于关 \\
+MSRCv2 & knn & $0.313{\pm}0.039$ & $\mathbf{0.345{\pm}0.052}$ & $0.167{\pm}0.070$ & $\mathbf{0.202{\pm}0.076}$ & 与公平维主结论一致 \\
+MSRCv2 & ipal & $0.255{\pm}0.027$ & $\mathbf{0.262{\pm}0.033}$ & $0.089{\pm}0.044$ & $0.113{\pm}0.052$ & 小幅提升 \\
+MSRCv2 & plsvm & $\mathbf{0.181{\pm}0.031}$ & $0.154{\pm}0.038$ & $0.000{\pm}0.000$ & $0.000{\pm}0.000$ & \textbf{全开劣于关} \\
+Mirflickr & knn & $\mathbf{0.446{\pm}0.015}$ & $0.441{\pm}0.022$ & $0.015{\pm}0.022$ & $0.043{\pm}0.053$ & knn 上 balanced 略降 \\
+Mirflickr & ipal & $0.460{\pm}0.034$ & $\mathbf{0.502{\pm}0.034}$ & $0.099{\pm}0.081$ & $\mathbf{0.206{\pm}0.140}$ & ipal 上大幅提升 \\
+Mirflickr & plsvm & $0.418{\pm}0.024$ & $0.421{\pm}0.024$ & $0.056{\pm}0.067$ & $0.180{\pm}0.111$ & balanced 接近，few 升 \\
+slashdotpl-f1 & knn & $\mathbf{0.328{\pm}0.017}$ & $0.315{\pm}0.013$ & $\mathbf{0.152{\pm}0.037}$ & $0.136{\pm}0.037$ & 全开更差（与旧消融一致） \\
+slashdotpl-f1 & ipal & $\mathbf{0.332{\pm}0.017}$ & $0.324{\pm}0.018$ & $0.156{\pm}0.014$ & $0.156{\pm}0.036$ & 略降 \\
+slashdotpl-f1 & plsvm & $\mathbf{0.345{\pm}0.019}$ & $0.340{\pm}0.012$ & $0.143{\pm}0.018$ & $0.163{\pm}0.028$ & 接近 \\
+Soccer Player & knn & $0.166{\pm}0.007$ & $\mathbf{0.169{\pm}0.011}$ & $0.086{\pm}0.014$ & $\mathbf{0.090{\pm}0.017}$ & 小幅正 \\
+Soccer Player & ipal & $\mathbf{0.143{\pm}0.008}$ & $0.143{\pm}0.009$ & $0.082{\pm}0.014$ & $0.086{\pm}0.020$ & 基本持平 \\
+Soccer Player & plsvm & $0.160{\pm}0.009$ & $\mathbf{0.188{\pm}0.009}$ & $0.105{\pm}0.013$ & $\mathbf{0.117{\pm}0.022}$ & plsvm 上 SR+CB 较明显 \\
+Yahoo! News & knn & $0.560{\pm}0.015$ & $\mathbf{0.569{\pm}0.016}$ & $0.465{\pm}0.026$ & $0.465{\pm}0.024$ & balanced 升，few 持平 \\
+Yahoo! News & ipal & $0.579{\pm}0.018$ & $\mathbf{0.584{\pm}0.015}$ & $0.480{\pm}0.031$ & $\mathbf{0.491{\pm}0.019}$ & 双指标略优 \\
+Yahoo! News & plsvm & $0.444{\pm}0.013$ & $\mathbf{0.451{\pm}0.016}$ & $0.344{\pm}0.024$ & $0.354{\pm}0.016$ & 小幅正 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\paragraph{仅 CB 或仅 SR 的要点（见 CSV，此处文字归纳）。}
+\begin{itemize}
+  \item \textbf{MSRCv2 + knn：} 仅开 CB（F,T）已使 balanced 达 $0.335$，与全开 $0.345$ 接近，\textbf{CB 贡献为主}。
+  \item \textbf{Soccer + ipal：} 全开 balanced 约 $0.143$，与关 SR/CB 几乎相同；部分中间组合略波动，\textbf{ipal 对 SR/CB 不敏感}。
+  \item \textbf{Mirflickr + ipal：} 仅 CB（F,T）balanced 已达 $0.513$，高于仅 SR（T,F）的 $0.443$，\textbf{CB 对 ipal 路径更关键}。
+\end{itemize}
+
+\noindent\textbf{历史消融（\texttt{ablation\_sr\_cb\_core\_v2}）定位：}
+该批为 $R{=}5$、\textbf{仅 knn} 且 lost/MSRCv2 等曾固定 $d{=}13$，表中 lost 上「T,T 劣于 F,F」\textbf{不可}与主表（lost $d{=}20$）直接对比；完整结论以表~\ref{tab:ablation-ff-tt} 为准。
+
+\begin{table}[htbp]
+\centering
+\caption{（归档）\texttt{ablation\_sr\_cb\_core\_v2}：knn，$R{=}5$，$d{=}13$ 下 balanced（仅供与旧文对照）}
+\label{tab:ablation}
+\begin{tabular}{lccccc}
+\toprule
+Dataset & SR & CB & Bal & 备注 \\
+\midrule
+lost & F & F & $0.683$ & 非主表维数 \\
+lost & T & T & $0.656$ & 见上文，已被表~\ref{tab:ablation-ff-tt} 替代叙事 \\
+MSRCv2 & F & F & $0.299$ & \\
+MSRCv2 & T & T & $0.317$ & \\
+Mirflickr & F & F & $0.445$ & \\
+Mirflickr & T & T & $0.447$ & \\
+slashdot & F & F & $0.320$ & \\
+slashdot & T & T & $0.306$ & 四组合中 balanced 最低 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{运行时间：} \texttt{ablation\_sr\_cb\_all\_clf\_r10} 总时长见 \texttt{session\_manifest.json} 的 \texttt{wall\_seconds}；其余 campaign 亦可在对应 manifest 或 \texttt{logs/*.log} 中查看。
+
+%------------------------------------------------------------------------------
+\section{结果分析：结论—证据—解释}
+%------------------------------------------------------------------------------
+
+\subsection{较稳、可向导师汇报的结论}
+\begin{enumerate}
+  \item \textbf{Yahoo! News（$d{=}50$，多类人脸命名，高 IR）：}
+  \textbf{结论—} sr\_cb 在 knn/ipal 上 \textbf{balanced} 与（ipal）\textbf{few} 优于 baseline。
+  \textbf{证据—} 表~\ref{tab:main}。
+  \textbf{解释—} 提高 $d$ 缓解 219 类可分性不足；SR/CB 在传播中抑制高熵样本、拉平类占用，利于均衡指标。
+
+  \item \textbf{lost + ipal（$d{=}20$，稀疏类标注 *）：}
+  \textbf{结论—} sr\_cb 明显提升 balanced 与 few。
+  \textbf{证据—} 表~\ref{tab:main}。
+  \textbf{解释—} 配合 $r_{\min},\alpha$ 数据集覆盖；IPAL 对 PLL 结构更敏感，与更好消歧协同。
+
+  \item \textbf{Mirflickr + ipal：}
+  \textbf{结论—} sr\_cb 在 balanced / few 上大幅优于 baseline ipal。
+  \textbf{证据—} 表~\ref{tab:main}。
+  \textbf{解释—} 高维稀疏特征下 KNN 整体 Acc 占优但 few 极低；IPAL+SR/CB 更利于尾类。
+
+  \item \textbf{MSRCv2（$d$ 对齐、无 dist\_weight）：}
+  \textbf{结论—} \textbf{knn：} $d{=}8$ 时 sr\_cb 在 balanced 与 few 上均优于 baseline；$d{=}13$ 时 balanced 仍优，few 低于 baseline（维数—方法交互）。
+  \textbf{ipal} 在 $d{=}8,13$ 上 balanced/few 均为 sr\_cb 略优或持平；\textbf{plsvm} 在两种 $d$ 上 sr\_cb 的 balanced 均低于 baseline。
+  \textbf{证据—} 表~\ref{tab:msrcv2-d}。
+  \textbf{解释—} 原始维低、IR 高；CB 有利于均衡指标，但高维投影下尾类行为非单调，\textbf{不宜概括为「few 一定提升」}。
+
+  \item \textbf{Soccer + knn/plsvm（$d{=}50$）：}
+  \textbf{结论—} 小幅但一致的 balanced 提升（knn/plsvm）。
+  \textbf{证据—} 表~\ref{tab:main}；消融表~\ref{tab:ablation-ff-tt} 在 plsvm 上给出 F,F vs T,T 的量化对照（knn 亦同向）。
+  \textbf{解释—} 极大类数下需足够 $d$；SR/CB 带来边际改善。
+
+  \item \textbf{消融层面（表~\ref{tab:ablation-ff-tt}）：}
+  在\textbf{与主表一致的维数与 $R{=}10$}下，SR+CB 全开相对关关：\textbf{ipal 路径}在 lost / Mirflickr / Yahoo 上 balanced（及多数 few）提升最明显；\textbf{knn} 在 Yahoo、MSRCv2 上提升，在 Mirflickr、slashdot 上略降或更差。
+\end{enumerate}
+
+\subsection{无效或负面结论（需如实汇报）}
+\begin{enumerate}
+  \item \textbf{slashdotpl-f1 + knn：} 全开 SR+CB 的 balanced/few 均低于关关（表~\ref{tab:main}、表~\ref{tab:ablation-ff-tt}）。
+  \textbf{解释—} 旧表~\ref{tab:ablation} 在 $d{=}13$、仅 knn 下亦显示 T,T 最弱；候选恒为 2 类时熵信号弱，SR 易误判；\textbf{不宜在 slashdot+knn 上默认启用 SR+CB}。
+
+  \item \textbf{Mirflickr + knn：} 全开 balanced 略低于关关（表~\ref{tab:ablation-ff-tt}），与 ipal 上大幅提升\textbf{并存}。
+  \textbf{解释—} 度量空间分类器与消歧目标不一致；\textbf{不能}声称「所有分类器一致提升」。
+
+  \item \textbf{lost + knn：} F,F 与 T,T 的 balanced 几乎相同（表~\ref{tab:ablation-ff-tt}）；主表结论应强调 \textbf{ipal} 与 plsvm 分项。
+
+  \item \textbf{MSRCv2 + plsvm：} 消歧全开下 balanced 明显差于关关，few 近 $0$（表~\ref{tab:ablation-ff-tt}，$d{=}8$）；公平维下 baseline 与 sr\_cb 的对照见表~\ref{tab:msrcv2-d}（sr\_cb 仍不占优）。
+  \textbf{解释—} 原始维较低且 IR 高，PL-SVM 对消歧噪声与类间间隔敏感，SR/CB 传播未必改善其目标。
+
+  \item \textbf{lost + plsvm：} 全开略低于关关（balanced / few），与 ipal 相反；\textbf{分类器异质性}需在汇报中单列说明。
+\end{enumerate}
+
+\subsection{不稳定或证据不足}
+\begin{itemize}
+  \item 带 * 数据集存在极少样本类，指标方差大；\textbf{宜作补充材料}。
+  \item 未做形式化显著性检验；\textbf{当前证据不足}以声称「统计显著优于」。
+  \item SURE 大集核实验 $R{=}3$，且与论文 Table 4 设置（特征、超参网格）不完全一致；\textbf{仅作讨论}。
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{不理想结果的机制归纳}
+%------------------------------------------------------------------------------
+
+\begin{itemize}
+  \item \textbf{低维原始特征 + 高 IR（MSRCv2）：} 整体可分性弱；需合适 $d$ 与分类器；PL-SVM 对当前消歧特征敏感（表~\ref{tab:msrcv2-d}）。
+  \item \textbf{极大 $Q$ + 极端 IR（Soccer）：} balanced 绝对值仍低；任何方法均难；核 SURE 仍易出现多数类倾向（日志 \texttt{sure\_kernel\_large}）。
+  \item \textbf{高维稀疏（Mirflickr）：} KNN 与 IPAL 行为分化（表~\ref{tab:ablation-ff-tt}：knn 上 balanced 略降，ipal 上大幅提升）。
+  \item \textbf{候选集结构简单（slashdot f1，平均候选=2）：} SR 的熵归一化信息量有限，易引入错误降权。
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{当前局限与下一步计划}
+%------------------------------------------------------------------------------
+
+\begin{itemize}
+  \item \textbf{CIFAR10：} 未完成 ResNet18（或同类）表征 + SDLPP 主链；\textbf{高优先级}。
+  \item \textbf{显著性检验} 与主表自动导出 LaTeX。
+  \item \textbf{主表 MSRCv2 行} 建议以表~\ref{tab:msrcv2-d}（$d{\in}\{8,13\}$，三分类器）替换 \texttt{main\_table\_v1} 中旧的不对齐维叙述。
+  \item \textbf{SR$\times$CB 叙事} 以 \texttt{ablation\_sr\_cb\_all\_clf\_r10}（表~\ref{tab:ablation-ff-tt}）为权威；\texttt{ablation\_sr\_cb\_core\_v2} 仅作历史对照。
+  \item 可选：slashdot 上关闭 SR 或单独调 $r_{\min}$ 的「条件配置」说明。
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\appendix
+\section{SR/CB 更新一步的伪代码形式}
+%------------------------------------------------------------------------------
+
+记 $\mathcal{N}_i$ 为 $i$ 的邻域（含自环）。一步传播可写为：
+\begin{equation}
+\tilde{Y}_{\cdot i} \;\propto\; \sum_{j \in \mathcal{N}_i} w^{\mathrm{dist}}_{ij}\, r_j\, Y_{\cdot j}
+\;\odot\; m_{\cdot i}
+\end{equation}
+其中 $m_{\cdot i}$ 为候选掩码；若启用 CB，再左乘 $\mathrm{diag}(w_1,\ldots,w_Q)$ 并列归一化。
+该式为\textbf{实现级概括}，非唯一可推导目标函数。
+
+\end{document}

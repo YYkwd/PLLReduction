@@ -21,12 +21,6 @@ python experiments/run.py \\
     --datasets lost MSRCv2 --methods sdlpp_baseline \\
     --classifiers knn ipal --campaign clf_compare
 
-# SURE (Feng & An, AAAI'19) after SDLPP: baseline vs SR+CB on Lost / Soccer Player
-python experiments/run.py \\
-    --datasets lost "Soccer Player" \\
-    --methods sdlpp_baseline sdlpp_sr_cb \\
-    --classifiers sure --n-repeats 10 --campaign sure_pll
-
 # SR x CB ablation (Cartesian product)
 python experiments/run.py \\
     --datasets lost MSRCv2 --method sdlpp_sr_cb \\
@@ -176,9 +170,6 @@ def build_experiment_grid(args):
                     cp = cfg_clf.setdefault('classifier', {}).setdefault('params', {})
                     t0 = int(cp.get('T', 2000))
                     cp['T'] = min(t0, 400)
-                if args.fast and clf_name == 'sure':
-                    cp = cfg_clf.setdefault('classifier', {}).setdefault('params', {})
-                    cp['max_iter'] = min(int(cp.get('max_iter', 50)), 12)
 
                 for cfg_swept, slabel in expand_sweep_grid(cfg_clf, sweep_axes):
                     grid.append(ExperimentSpec(

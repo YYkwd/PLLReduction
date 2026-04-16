@@ -3,6 +3,14 @@
 Alternates closed-form updates of a kernel (or linear) least-squares model and
 per-sample QP surrogates (paper Eq. (10)) for the confidence matrix P.
 
+Kernel vs linear (``classifier.params``):
+
+- ``use_kernel=True`` — always RBF kernel SURE (paper's main setup; O(m²) memory).
+- ``use_kernel=False`` — always linear SURE (Eq. (2)–(4)); cheap but weak on
+  very large / highly imbalanced data.
+- ``use_kernel`` omitted / ``null`` — **auto**: kernel iff ``m <= kernel_max_samples``
+  (default 2500), else linear.
+
 Reference: Feng & An, "Partial Label Learning with Self-Guided Retraining", AAAI 2019.
 """
 
@@ -18,7 +26,7 @@ DEFAULT_LAMBDA = 0.1
 DEFAULT_BETA = 0.1
 DEFAULT_MAX_ITER = 50
 DEFAULT_TOL = 1e-4
-# Kernel is O(m²); use linear model (paper Eq. (2)–(4)) beyond this training size.
+# When ``use_kernel`` is unset: kernel iff train size m <= this threshold (O(m²) RAM).
 DEFAULT_KERNEL_MAX_SAMPLES = 2500
 
 
@@ -130,7 +138,14 @@ def _kernel_solver(B: np.ndarray):
 
 
 class SUREClassifier:
-    """Kernel or linear SURE (AAAI'19) for PLL after dimensionality reduction."""
+    """Kernel or linear SURE (AAAI'19) for PLL after dimensionality reduction.
+
+    Params (YAML / ``classifier.params``):
+
+    - ``use_kernel`` (bool | omit): see module docstring; omit = auto by ``kernel_max_samples``.
+    - ``kernel_max_samples`` (int): auto-mode threshold only.
+    - ``lambda``, ``beta``, ``max_iter``, ``tol``, ``sigma`` (optional RBF bandwidth).
+    """
 
     def __init__(self, params=None):
         params = params or {}
@@ -143,7 +158,7 @@ class SUREClassifier:
         )
         use_k = params.get('use_kernel', None)
         if use_k is None:
-            self._use_kernel = None  # decided in fit from m
+            self._use_kernel = None  # auto: kernel iff m <= kernel_max_samples
         else:
             self._use_kernel = bool(use_k)
         self._sigma = params.get('sigma', None)

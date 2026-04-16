@@ -3,6 +3,11 @@ model:
   params:
     T: 100
     target_d: 13
+    target_d_by_dataset:
+      lost: 20
+      MSRCv2: 8
+      Soccer Player: 50
+      Yahoo! News: 50
     k: 8
     miu: 0.1
     thr: 0.95
@@ -13,17 +18,19 @@ disambig:
     use_sample_reliability: true
     use_class_balance: true
     r_min: 0.1
+    r_min_by_dataset:
+      MSRCv2: 0
+      lost: 0.2
+    alpha: 0.5
+    alpha_by_dataset:
+      lost: 0.3
     warmup: 5
     warmup_by_dataset:
       MSRCv2: 2
-      Mirflickr: 0
-      slashdotpl-f1: 0
       Soccer Player: 2
       Yahoo! News: 3
-    # Optional per-dataset overrides (uncomment after sweep; see experiments/REMOTE_EXPERIMENTS.md)
-    # r_min_by_dataset: {}
-    # alpha_by_dataset: {}
-    alpha: 0.5
+      lost : 0
+    use_distance_weight: false
 
 classifier:
   name: knn

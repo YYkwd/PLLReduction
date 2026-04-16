@@ -69,29 +69,41 @@ def load_experiment_config(dataset_name, method_name, cli_overrides=None,
         deep_merge(cfg, cli_overrides)
 
     resolve_disambig_params_by_dataset(cfg, dataset_name)
+    resolve_model_params_by_dataset(cfg, dataset_name)
     return cfg
 
 
-def resolve_disambig_params_by_dataset(cfg, dataset_name):
-    """Apply disambig.params.<name>_by_dataset mappings for the active dataset.
+def _apply_by_dataset_overrides(params: dict, dataset_name: str) -> None:
+    """Pop all ``<name>_by_dataset`` keys in *params* and apply dataset-specific values.
 
-    Pops each ``*_by_dataset`` dict and, if ``dataset_name`` is a key, sets
-    ``<name>`` to that value. Supports ``warmup_by_dataset``, ``r_min_by_dataset``,
-    ``alpha_by_dataset``, etc.
+    Supports arbitrary param names — e.g. ``warmup_by_dataset``, ``target_d_by_dataset``,
+    ``use_distance_weight_by_dataset``, etc.
     """
-    dp = cfg.get('disambig', {}).get('params', {})
-    if not isinstance(dp, dict):
+    if not isinstance(params, dict):
         return
     suffix = '_by_dataset'
-    for k in list(dp.keys()):
+    for k in list(params.keys()):
         if not k.endswith(suffix):
             continue
         base = k[: -len(suffix)]
-        mapping = dp.pop(k)
+        mapping = params.pop(k)
         if not isinstance(mapping, dict):
             continue
         if dataset_name in mapping:
-            dp[base] = mapping[dataset_name]
+            params[base] = mapping[dataset_name]
+
+
+def resolve_disambig_params_by_dataset(cfg, dataset_name):
+    """Apply disambig.params.<name>_by_dataset mappings for the active dataset."""
+    _apply_by_dataset_overrides(cfg.get('disambig', {}).get('params', {}), dataset_name)
+
+
+def resolve_model_params_by_dataset(cfg, dataset_name):
+    """Apply model.params.<name>_by_dataset mappings for the active dataset.
+
+    Supports e.g. ``target_d_by_dataset``.
+    """
+    _apply_by_dataset_overrides(cfg.get('model', {}).get('params', {}), dataset_name)
 
 
 def set_nested(d, dotted_path, value):

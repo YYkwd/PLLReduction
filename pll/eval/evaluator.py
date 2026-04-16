@@ -143,7 +143,8 @@ class Evaluator:
 
         X_train_low = reducer.transform(X_train)
         X_test_low = reducer.transform(X_test)
-        return y_train, y_test, pt_train, X_train_low, X_test_low
+        dim_out = int(X_train_low.shape[1])
+        return y_train, y_test, pt_train, X_train_low, X_test_low, dim_out
 
     def _classify_split_metrics(self, cfg, X_train_low, X_test_low, y_train, y_test,
                                 pt_train, n_classes):
@@ -156,10 +157,12 @@ class Evaluator:
 
     def _run_single_split(self, X, y, partial_target, train_idx, test_idx,
                           n_classes, cfg):
-        y_train, y_test, pt_train, X_train_low, X_test_low = self._reduced_mats_for_split(
-            X, y, partial_target, train_idx, test_idx, cfg)
-        return self._classify_split_metrics(
+        y_train, y_test, pt_train, X_train_low, X_test_low, dim_out = (
+            self._reduced_mats_for_split(X, y, partial_target, train_idx, test_idx, cfg))
+        m = self._classify_split_metrics(
             cfg, X_train_low, X_test_low, y_train, y_test, pt_train, n_classes)
+        m['dim_out'] = dim_out
+        return m
 
     def run_multi_classifier(self, dataset, configs: list[dict]) -> list[EvalResult]:
         """Same as ``run`` but one reducer fit per split for multiple classifier configs.
@@ -207,7 +210,7 @@ class Evaluator:
         for i, (train_idx, test_idx) in enumerate(splitter.split(X, y)):
             log.info("Split %d/%d  train=%d  test=%d",
                      i + 1, splitter.n_repeats, len(train_idx), len(test_idx))
-            y_train, y_test, pt_train, X_train_low, X_test_low = (
+            y_train, y_test, pt_train, X_train_low, X_test_low, dim_out = (
                 self._reduced_mats_for_split(
                     X, y, partial_target, train_idx, test_idx, cfg0))
             for j, cfg in enumerate(configs):
@@ -215,6 +218,7 @@ class Evaluator:
                     cfg, X_train_low, X_test_low, y_train, y_test, pt_train,
                     n_classes)
                 m['split_idx'] = i
+                m['dim_out'] = dim_out
                 split_metrics_per[j].append(m)
                 log.info("  [%s] overall=%.4f  balanced=%.4f",
                          cfg.get('classifier', {}).get('name', '?'),

@@ -217,7 +217,9 @@ def save_summary_csv(rows, path):
         metric_fields.extend([f'{mk}_mean', f'{mk}_std'])
         if any(f'{mk}_valid_runs' in r for r in rows):
             metric_fields.append(f'{mk}_valid_runs')
-    fieldnames = meta_fields + sweep_cols + metric_fields + ['n_repeats', 'dataset_warning']
+    has_dim_out = any('dim_out' in r for r in rows)
+    dim_out_col = ['dim_out'] if has_dim_out else []
+    fieldnames = meta_fields + sweep_cols + dim_out_col + metric_fields + ['n_repeats', 'dataset_warning']
 
     with open(path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')

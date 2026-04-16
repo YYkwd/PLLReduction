@@ -71,6 +71,10 @@ def aggregate_split_metrics(split_metrics, dataset_warning=None):
     n = len(split_metrics)
     summary = {'n_repeats': n}
 
+    dim_out_vals = [m['dim_out'] for m in split_metrics if 'dim_out' in m]
+    if dim_out_vals:
+        summary['dim_out'] = int(dim_out_vals[0])
+
     for key in ('overall_acc', 'balanced_acc'):
         vals = [m[key] for m in split_metrics]
         summary[f'{key}_mean'] = float(np.mean(vals))
